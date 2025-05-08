@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <!-- Launch the Gazebo -->
+  <arg name="world_name" default="$(find marslite_simulation)/worlds/supermarket.world"/>
+  <arg name="paused" default="true"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="gui" default="true"/>
+  <arg name="headless" default="false"/>
+  <arg name="debug" default="false"/>
+
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(arg world_name)"/>
+    <arg name="debug" value="$(arg debug)" />
+    <arg name="gui" value="$(arg gui)" />
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="headless" value="$(arg headless)"/>
+  </include>
+  
+  <!-- Spawn the robot -->
+  <arg name="laser_enabled" default="true" />
+  <arg name="realsense_enabled" default="false" />
+  
+  <include file="$(find marslite_simulation)/launch/spawn_mars.launch">
+    <arg name="laser_enabled" value="$(arg laser_enabled)" />
+    <arg name="realsense_enabled" value="$(arg realsense_enabled)" />
+    <arg name="robot_init_x" value="2.0" />
+    <arg name="robot_init_y" value="1.5" />
+  </include>
+
+</launch>

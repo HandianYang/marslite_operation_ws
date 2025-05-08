@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>marslite_moveit_config</name>
+  <version>1.0.0</version>
+  <description>
+     An automatically generated package with all the configuration and launch files for using the marslite with the MoveIt! Motion Planning Framework
+  </description>
+  <maintainer email="ych0610765@gmail.com">HandianYang</maintainer>
+  <license>GPL</license>
+
+  <url type="website">http://moveit.ros.org/</url>
+  <url type="bugtracker">https://github.com/ros-planning/moveit/issues</url>
+  <url type="repository">https://github.com/ros-planning/moveit</url>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <build_depend>moveit_ros_move_group</build_depend>
+  <exec_depend>moveit_ros_move_group</exec_depend>
+
+  <build_depend>moveit_fake_controller_manager</build_depend>
+  <exec_depend>moveit_fake_controller_manager</exec_depend>
+
+  <build_depend>moveit_kinematics</build_depend>
+  <exec_depend>moveit_kinematics</exec_depend>
+
+  <build_depend>moveit_planners_ompl</build_depend>
+  <exec_depend>moveit_planners_ompl</exec_depend>
+
+  <build_depend>moveit_ros_visualization</build_depend>
+  <exec_depend>moveit_ros_visualization</exec_depend>
+
+  <build_depend>moveit_setup_assistant</build_depend>
+  <exec_depend>moveit_setup_assistant</exec_depend>
+
+  <build_depend>joint_state_publisher</build_depend>
+  <exec_depend>joint_state_publisher</exec_depend>
+
+  <build_depend>robot_state_publisher</build_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  
+  <build_depend>xacro</build_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <build_depend>marslite_description</build_depend>
+  <exec_depend>marslite_description</exec_depend>
+</package>
