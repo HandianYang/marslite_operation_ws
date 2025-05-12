@@ -8,8 +8,7 @@
 CartesianControlKeyboard::CartesianControlKeyboard(const ros::NodeHandle& nh)
   : nh_(nh), input_key_('\0'), rate_(ros::Rate(60)), is_stopped_(false)
 {
-  // pose_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("cartesian_pose", 10);
-  target_frame_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("target_frame", 10);
+  target_frame_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/target_frame", 10);
 
   current_pose_.header.frame_id = "base_link";
   current_pose_.pose.position.x = 0.712;
@@ -26,9 +25,11 @@ void CartesianControlKeyboard::run()
 {
   while (ros::ok() && !is_stopped_) {
     getKeyboardInput();
-    processInput();
-    publishPose();
-
+    if (input_key_ != '\0') {
+      processInput();
+      publishPose();
+    }
+    
     rate_.sleep();
     ros::spinOnce();
   }
