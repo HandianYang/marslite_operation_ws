@@ -61,11 +61,14 @@ include_directories(
 
 add_library(cartesian_control_lib
   src/cartesian_control_keyboard.cpp
+  src/cartesian_control_joystick.cpp
 )
 
 add_executable(test_cartesian_control_keyboard test/test_cartesian_control_keyboard.cpp)
 target_link_libraries(test_cartesian_control_keyboard ${catkin_LIBRARIES} cartesian_control_lib)
 
+add_executable(test_cartesian_control_joystick test/test_cartesian_control_joystick.cpp)
+target_link_libraries(test_cartesian_control_joystick ${catkin_LIBRARIES} cartesian_control_lib)
 
 ################################################################################
 # Install
