@@ -3,7 +3,7 @@ xhost +local:docker
 
 DOCKER_IMAGE="handianyang/marslite-operation"
 DOCKER_TAG_NAME="ros1-noetic"
-DOCKER_TAG_VERSION="v1.0.0"
+DOCKER_TAG_VERSION="v1.1.0"
 DOCKER_TAG="${DOCKER_TAG_NAME}-${DOCKER_TAG_VERSION}"
 CONTAINER_NAME="marslite-operation"
 
