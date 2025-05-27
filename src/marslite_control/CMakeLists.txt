@@ -16,6 +16,7 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   roscpp
   sensor_msgs
+  std_msgs
   tf
   # trajectory_msgs
 )
@@ -43,6 +44,7 @@ catkin_package(
     geometry_msgs
     roscpp
     sensor_msgs
+    std_msgs
     tf
     # trajectory_msgs
   # LIBRARIES

@@ -112,18 +112,20 @@ void CartesianControlKeyboard::processInput()
     case 'q':
     case 'Q':
       is_stopped_ = true;
+      ROS_INFO_STREAM("Terminate the program.");
       break;
     // E/e: Switch between position and orientation control
     case 'e':
     case 'E':
+      // Add 0.5 seconds cooldown to prevent rapid switching
       if ((ros::Time::now() - last_switch_time).toSec() >= 0.5) {
         is_position_control_ = !is_position_control_;
         last_switch_time = ros::Time::now();
         if (is_position_control_) {
           ROS_INFO_STREAM("Switch to position control mode.");
         } else {
-          ROS_INFO_STREAM("Switch to orientation control mode.");
           target_pose_rpy_ = this->convertQuaternionMsgToRPY(target_pose_.pose.orientation);
+          ROS_INFO_STREAM("Switch to orientation control mode.");
         }
       }
       break;
@@ -131,6 +133,7 @@ void CartesianControlKeyboard::processInput()
     case ' ':
       target_pose_ = kInitialGripperPose;
       target_pose_rpy_ = this->convertQuaternionMsgToRPY(target_pose_.pose.orientation);
+      ROS_INFO_STREAM("Reset to the initial gripper pose.");
       break;
     default:
       if (is_position_control_) {

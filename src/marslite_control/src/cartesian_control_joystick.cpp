@@ -22,7 +22,6 @@ void CartesianControlJoystick::run()
   while (ros::ok()) {
     if (is_position_change_enabled_ || is_orientation_change_enabled_) {
       if (is_begin_teleoperation_) {
-        // ROS_INFO_STREAM("Begin the teleoperation...");
         initial_left_joy_pose_.pose = current_left_joy_pose_.pose;
         this->obtainInitialLeftJoyPose();
         is_begin_teleoperation_ = false;
@@ -48,12 +47,14 @@ void CartesianControlJoystick::parseParameters()
 {
   ros::NodeHandle pnh("~");
   pnh.param("position_scale", position_scale_, 0.8);
-  pnh.param("orientation_scale", orientation_scale_, 0.3);
+  pnh.param("orientation_scale", orientation_scale_, 0.8);
 }
 
 void CartesianControlJoystick::initializePublishersAndSubscribers()
 {
   target_frame_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/target_frame", 10);
+  gripper_pub_ = nh_.advertise<std_msgs::Bool>("/gripper/cmd_gripper", 1);
+  
   left_joy_pose_sub_ = nh_.subscribe("/unity/joy_pose/left", 10, &CartesianControlJoystick::leftJoyPoseCallback, this);
   left_joy_sub_ = nh_.subscribe("/unity/joy/left", 10, &CartesianControlJoystick::leftJoyCallback, this);
 }
@@ -92,11 +93,6 @@ double CartesianControlJoystick::restrictAngleWithinPI(const double& angle)
   else if (angle < -M_PI)
     return angle + 2 * M_PI;
   return angle;
-}
-
-tf2::Quaternion CartesianControlJoystick::convertQuaternionFromJoystickToWorld(const tf2::Quaternion& quaternion_difference)
-{
-  return (initial_left_joy_quaternion_.inverse() * quaternion_difference * initial_left_joy_quaternion_).normalize();
 }
 
 void CartesianControlJoystick::obtainInitialLeftJoyPose()
@@ -146,46 +142,37 @@ void CartesianControlJoystick::calculateTargetGripperPose()
 
   if (is_orientation_change_enabled_) {
     RPY orientation_difference = this->getOrientationDifference();
-    // ROS_INFO_STREAM("Orientation Difference (RPY): ["
-    //         << orientation_difference.roll << ", "
-    //         << orientation_difference.pitch << ", "
-    //         << orientation_difference.yaw << "]");
+
+    // [NOTE] The transformation from `base_link` to `tm_tip_link` is applied here`:
+    //   | base_link | tm_tip_link |
+    //   |-----------|-------------|
+    //   |  +-roll   |   -+pitch   |
+    //   |  +-pitch  |   +-roll    |
+    //   |  +-yaw    |   +-yaw     |
+    // 
+    // [NOTE] The pitch of the transformed RPY is disabled because we don't need roll rotation
+    //   for the gripper (w.r.t. `base_link`)`. Uncomment the line below if you want
+    //   to enable it.
     RPY scaled_orientation_difference;
-    // scaled_orientation_difference.roll = orientation_difference.roll * orientation_scale_;
-    // scaled_orientation_difference.pitch = orientation_difference.pitch * orientation_scale_;
-    // scaled_orientation_difference.yaw = orientation_difference.yaw * orientation_scale_;
     scaled_orientation_difference.roll = orientation_difference.pitch * orientation_scale_;
-    scaled_orientation_difference.pitch = -orientation_difference.roll * orientation_scale_;
+    // scaled_orientation_difference.pitch = -orientation_difference.roll * orientation_scale_;
+    scaled_orientation_difference.pitch = 0;
     scaled_orientation_difference.yaw = orientation_difference.yaw * orientation_scale_;
 
-    RPY initial_left_joy_rpy = getRPYFromPose(initial_left_joy_pose_);
+    RPY initial_gripper_rpy = getRPYFromPose(initial_gripper_pose_);
     RPY target_gripper_rpy = {
-        this->restrictAngleWithinPI(initial_left_joy_rpy.roll + scaled_orientation_difference.roll),
-        this->restrictAngleWithinPI(initial_left_joy_rpy.pitch + scaled_orientation_difference.pitch),
-        this->restrictAngleWithinPI(initial_left_joy_rpy.yaw + scaled_orientation_difference.yaw)
+        this->restrictAngleWithinPI(initial_gripper_rpy.roll + scaled_orientation_difference.roll),
+        this->restrictAngleWithinPI(initial_gripper_rpy.pitch + scaled_orientation_difference.pitch),
+        this->restrictAngleWithinPI(initial_gripper_rpy.yaw + scaled_orientation_difference.yaw)
     };
+
     tf2::Quaternion target_gripper_quaternion;
     target_gripper_quaternion.setRPY(
         target_gripper_rpy.roll,
         target_gripper_rpy.pitch,
         target_gripper_rpy.yaw
     );
-    // target_gripper_quaternion = kBaseLinkToTMTipLinkQuaternion * target_gripper_quaternion;
-    // target_gripper_quaternion = tf2::Quaternion(0, 0, 0.707, 0.707) * target_gripper_quaternion;
     target_gripper_quaternion.normalize();
-
-    // tf2::Quaternion scaled_quaternion_difference;
-    // scaled_quaternion_difference.setRPY(
-    //     scaled_orientation_difference.roll,
-    //     scaled_orientation_difference.pitch,
-    //     scaled_orientation_difference.yaw
-    // );
-    // scaled_quaternion_difference.normalize();
-    // tf2::Quaternion target_gripper_quaternion = scaled_quaternion_difference * initial_left_joy_quaternion_;
-    // target_gripper_quaternion.normalize();
-    // tf2::Quaternion scaled_quaternion_difference_world =
-    //     this->convertQuaternionFromJoystickToWorld(scaled_quaternion_difference);
-    // tf2::Quaternion target_gripper_quaternion = scaled_quaternion_difference_world * initial_left_joy_quaternion_;
     target_gripper_pose_.pose.orientation.x = target_gripper_quaternion.x();
     target_gripper_pose_.pose.orientation.y = target_gripper_quaternion.y();
     target_gripper_pose_.pose.orientation.z = target_gripper_quaternion.z();
@@ -195,38 +182,7 @@ void CartesianControlJoystick::calculateTargetGripperPose()
 
 void CartesianControlJoystick::leftJoyPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
 {
-  // current_left_joy_pose_.pose = msg->pose;
-
-  tf2::Quaternion current_left_joy_quaternion(
-    msg->pose.orientation.x,
-    msg->pose.orientation.y,
-    msg->pose.orientation.z,
-    msg->pose.orientation.w
-  );
-
-  tf2::Quaternion base_link_to_tm_tip_link(0.5, 0.5, 0.5, 0.5);
-  current_left_joy_quaternion = kBaseLinkToTMTipLinkQuaternion * current_left_joy_quaternion;
-  current_left_joy_quaternion.normalize();
-
-  current_left_joy_pose_.header = msg->header;
-  current_left_joy_pose_.pose.position.x = msg->pose.position.x;
-  current_left_joy_pose_.pose.position.y = msg->pose.position.y;
-  current_left_joy_pose_.pose.position.z = msg->pose.position.z;
-  current_left_joy_pose_.pose.orientation.x = current_left_joy_quaternion.x();
-  current_left_joy_pose_.pose.orientation.y = current_left_joy_quaternion.y();
-  current_left_joy_pose_.pose.orientation.z = current_left_joy_quaternion.z();
-  current_left_joy_pose_.pose.orientation.w = current_left_joy_quaternion.w();
-
-  // RPY current_rpy = getRPYFromPose(current_left_joy_pose_);
-  // ROS_INFO_STREAM("Current Position: ["
-  //                 << current_left_joy_pose_.pose.position.x << ", "
-  //                 << current_left_joy_pose_.pose.position.y << ", "
-  //                 << current_left_joy_pose_.pose.position.z << "]");
-  // ROS_INFO_STREAM("Current Orientation (Quaternion): ["
-  //                 << current_left_joy_pose_.pose.orientation.x << ", "
-  //                 << current_left_joy_pose_.pose.orientation.y << ", "
-  //                 << current_left_joy_pose_.pose.orientation.z << ", "
-  //                 << current_left_joy_pose_.pose.orientation.w << "]");
+  current_left_joy_pose_.pose = msg->pose;
 }
 
 void CartesianControlJoystick::leftJoyCallback(const sensor_msgs::Joy::ConstPtr& msg)
@@ -248,13 +204,18 @@ void CartesianControlJoystick::leftJoyCallback(const sensor_msgs::Joy::ConstPtr&
 
   switch (msg->buttons.size()) {
     case 2:
-      // [1] Y
+      // [1] Y button: Reset the gripper pose to the initial one.
       if (msg->buttons[1] == 1) {
         target_gripper_pose_ = kInitialGripperPose;
         target_frame_pub_.publish(target_gripper_pose_);
+        ROS_INFO_STREAM_THROTTLE(1, "Reset to the initial gripper pose.");
       }
     case 1:
-      // [0] X
+      // [0] X button: Toggle the gripper state.
+      if (msg->buttons[0] == 1) {
+        gripper_.data = !gripper_.data;
+        gripper_pub_.publish(gripper_);
+      }
       break;
     default:
       ROS_WARN_ONCE("Mismatch number of left joystick buttons (%lu).", msg->buttons.size());
