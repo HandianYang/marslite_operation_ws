@@ -1,22 +1,17 @@
 ################################################################################
 # Set minimum required version of cmake, project name and compile options
 ################################################################################
-cmake_minimum_required(VERSION 3.5)
-set(CMAKE_CXX_STANDARD 17)
-add_compile_options(-std=c++17)
 
-project(marslite_control)
+cmake_minimum_required(VERSION 3.5)
+project(detection_msgs)
 
 ################################################################################
 # Find catkin packages and libraries for catkin and system dependencies
 ################################################################################
 find_package(catkin REQUIRED COMPONENTS
-  detection_msgs
   geometry_msgs
-  roscpp
-  sensor_msgs
+  message_generation
   std_msgs
-  tf
 )
 
 ################################################################################
@@ -27,9 +22,34 @@ find_package(catkin REQUIRED COMPONENTS
 # Declare ROS messages, services and actions
 ################################################################################
 
+add_message_files(
+  FILES
+  BoundingBox.msg
+  BoundingBoxArray.msg
+  DetectedObject.msg
+  DetectedObjectArray.msg
+  InferenceResult.msg
+  InferenceResultArray.msg
+)
+
+add_service_files(
+  FILES
+  DriveToInitialPoint.srv
+  DriveToObservePoint.srv
+  ObjectGrasping.srv
+  TriggerRecording.srv
+)
+
+generate_messages(
+  DEPENDENCIES
+  geometry_msgs
+  std_msgs
+)
+
 ################################################################################
 # Declare ROS dynamic reconfigure parameters
 ################################################################################
+
 
 ################################################################################
 # Declare catkin specific configuration to be passed to dependent projects
@@ -37,13 +57,8 @@ find_package(catkin REQUIRED COMPONENTS
 
 catkin_package(
   CATKIN_DEPENDS
-    detection_msgs
     geometry_msgs
-    roscpp
-    sensor_msgs
     std_msgs
-    tf
-  INCLUDE_DIRS include
 )
 
 ################################################################################
@@ -51,24 +66,8 @@ catkin_package(
 ################################################################################
 
 include_directories(
-  include
   ${catkin_INCLUDE_DIRS}
 )
-
-add_library(cartesian_control_lib
-  src/cartesian_control_keyboard.cpp
-  src/cartesian_control_joystick.cpp
-  src/cartesian_control_object_grasping.cpp
-)
-
-add_executable(test_cartesian_control_keyboard test/test_cartesian_control_keyboard.cpp)
-target_link_libraries(test_cartesian_control_keyboard ${catkin_LIBRARIES} cartesian_control_lib)
-
-add_executable(test_cartesian_control_joystick test/test_cartesian_control_joystick.cpp)
-target_link_libraries(test_cartesian_control_joystick ${catkin_LIBRARIES} cartesian_control_lib)
-
-add_executable(test_object_grasping test/test_object_grasping.cpp)
-target_link_libraries(test_object_grasping ${catkin_LIBRARIES} cartesian_control_lib)
 
 ################################################################################
 # Install

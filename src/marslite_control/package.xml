@@ -8,11 +8,8 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
-  <!-- <build_depend>actionlib</build_depend>
-  <exec_depend>actionlib</exec_depend>
-
-  <build_depend>control_msgs</build_depend>
-  <exec_depend>control_msgs</exec_depend> -->
+  <build_depend>detection_msgs</build_depend>
+  <exec_depend>detection_msgs</exec_depend>
 
   <build_depend>geometry_msgs</build_depend>
   <build_export_depend>geometry_msgs</build_export_depend>
@@ -30,7 +27,5 @@
   <build_depend>tf</build_depend>
   <exec_depend>tf</exec_depend>
 
-  <!-- <build_depend>trajectory_msgs</build_depend>
-  <exec_depend>trajectory_msgs</exec_depend> -->
 
 </package>
