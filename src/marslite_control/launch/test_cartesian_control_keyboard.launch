@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <env name="ROSCONSOLE_FORMAT" value="[${severity}] [${node}] ${message}"/>
+
+  <node name="test_cartesian_control_keyboard" pkg="marslite_control" type="test_cartesian_control_keyboard" output="screen"/>
+</launch>

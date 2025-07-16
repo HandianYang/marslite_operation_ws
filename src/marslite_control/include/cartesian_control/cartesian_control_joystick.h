@@ -52,7 +52,6 @@ private:
   geometry_msgs::PoseStamped initial_gripper_pose_;
   geometry_msgs::PoseStamped relative_gripper_pose_;
   geometry_msgs::PoseStamped target_gripper_pose_;
-  tf2::Quaternion initial_left_joy_quaternion_;
   std_msgs::Bool gripper_;
 
   // flags
@@ -75,7 +74,6 @@ private:
   double restrictAngleWithinPI(const double& angle);
 
   // main operations
-  void obtainInitialLeftJoyPose();
   geometry_msgs::Vector3 getPositionDifference();
   RPY getOrientationDifference();
   void calculateTargetGripperPose();

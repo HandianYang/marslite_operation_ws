@@ -23,7 +23,6 @@ void CartesianControlJoystick::run()
     if (is_position_change_enabled_ || is_orientation_change_enabled_) {
       if (is_begin_teleoperation_) {
         initial_left_joy_pose_.pose = current_left_joy_pose_.pose;
-        this->obtainInitialLeftJoyPose();
         is_begin_teleoperation_ = false;
       }
 
@@ -95,16 +94,6 @@ double CartesianControlJoystick::restrictAngleWithinPI(const double& angle)
   return angle;
 }
 
-void CartesianControlJoystick::obtainInitialLeftJoyPose()
-{
-  initial_left_joy_quaternion_ = tf2::Quaternion(
-    initial_left_joy_pose_.pose.orientation.x,
-    initial_left_joy_pose_.pose.orientation.y,
-    initial_left_joy_pose_.pose.orientation.z,
-    initial_left_joy_pose_.pose.orientation.w
-  );
-}
-
 geometry_msgs::Vector3 CartesianControlJoystick::getPositionDifference()
 {
   geometry_msgs::Vector3 position_difference;
@@ -150,13 +139,14 @@ void CartesianControlJoystick::calculateTargetGripperPose()
     //   |  +-pitch  |   +-roll    |
     //   |  +-yaw    |   +-yaw     |
     // 
+    RPY scaled_orientation_difference;
+    scaled_orientation_difference.roll = orientation_difference.pitch * orientation_scale_;
+    scaled_orientation_difference.pitch = 0;
     // [NOTE] The pitch of the transformed RPY is disabled because we don't need roll rotation
     //   for the gripper (w.r.t. `base_link`)`. Uncomment the line below if you want
     //   to enable it.
-    RPY scaled_orientation_difference;
-    scaled_orientation_difference.roll = orientation_difference.pitch * orientation_scale_;
+    //  
     // scaled_orientation_difference.pitch = -orientation_difference.roll * orientation_scale_;
-    scaled_orientation_difference.pitch = 0;
     scaled_orientation_difference.yaw = orientation_difference.yaw * orientation_scale_;
 
     RPY initial_gripper_rpy = getRPYFromPose(initial_gripper_pose_);
