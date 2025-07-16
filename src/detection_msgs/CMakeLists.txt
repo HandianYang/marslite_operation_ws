@@ -24,20 +24,16 @@ find_package(catkin REQUIRED COMPONENTS
 
 add_message_files(
   FILES
-  BoundingBox.msg
-  BoundingBoxArray.msg
   DetectedObject.msg
   DetectedObjectArray.msg
-  InferenceResult.msg
-  InferenceResultArray.msg
 )
 
 add_service_files(
   FILES
   DriveToInitialPoint.srv
   DriveToObservePoint.srv
-  ObjectGrasping.srv
-  TriggerRecording.srv
+  GraspObjectWithID.srv
+  RecordObjectPosition.srv
 )
 
 generate_messages(
