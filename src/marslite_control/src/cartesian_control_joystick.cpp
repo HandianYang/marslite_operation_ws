@@ -17,102 +17,22 @@ CartesianControlJoystick::CartesianControlJoystick(const ros::NodeHandle& nh)
  *                  Public members                    *  
  ****************************************************** */
 
-void CartesianControlJoystick::run()
+void CartesianControlJoystick::teleoperateOnce()
 {
-  while (ros::ok()) {
-    if (is_position_change_enabled_ || is_orientation_change_enabled_) {
-      if (is_begin_teleoperation_) {
-        initial_left_joy_pose_.pose = current_left_joy_pose_.pose;
-        is_begin_teleoperation_ = false;
-      }
-
-      this->calculateTargetGripperPose();
-      target_frame_pub_.publish(target_gripper_pose_);
-    } else {
-      is_begin_teleoperation_ = true;
-      initial_gripper_pose_ = target_gripper_pose_;
+  base_link_to_tm_gripper_transform_ = tf2_listener_.lookupTransform("base_link", "tm_gripper");
+  if (is_position_change_enabled_ || is_orientation_change_enabled_) {
+    if (is_begin_teleoperation_) {
+      initial_left_joy_pose_.pose = current_left_joy_pose_.pose;
+      is_begin_teleoperation_ = false;
     }
-    
-    rate_.sleep();
-    ros::spinOnce();
+    this->calculateTargetGripperPose();
+  } else {
+    this->setGripperPositionToCurrent();
+    this->setGripperOrientationToCurrent();
+    initial_gripper_pose_ = target_gripper_pose_;
+    is_begin_teleoperation_ = true;
   }
-}
-
-/******************************************************
- *                  Private members                   *  
- ****************************************************** */
-
-void CartesianControlJoystick::parseParameters()
-{
-  ros::NodeHandle pnh("~");
-  pnh.param("position_scale", position_scale_, 0.8);
-  pnh.param("orientation_scale", orientation_scale_, 0.8);
-}
-
-void CartesianControlJoystick::initializePublishersAndSubscribers()
-{
-  target_frame_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/target_frame", 10);
-  gripper_pub_ = nh_.advertise<std_msgs::Bool>("/gripper/cmd_gripper", 1);
-  
-  left_joy_pose_sub_ = nh_.subscribe("/unity/joy_pose/left", 10, &CartesianControlJoystick::leftJoyPoseCallback, this);
-  left_joy_sub_ = nh_.subscribe("/unity/joy/left", 10, &CartesianControlJoystick::leftJoyCallback, this);
-}
-
-void CartesianControlJoystick::setInitialGripperPose()
-{
-  initial_gripper_pose_ = target_gripper_pose_ = kInitialGripperPose;
-}
-
-RPY CartesianControlJoystick::getRPYFromPose(const geometry_msgs::PoseStamped& pose)
-{
-  RPY rpy;
-  const double x = pose.pose.orientation.x;
-  const double y = pose.pose.orientation.y;
-  const double z = pose.pose.orientation.z;
-  const double w = pose.pose.orientation.w;
-
-  tf2::Quaternion q(x, y, z, w);
-  if (q.length2() == 0.0) {
-    ROS_ERROR("Invalid quaternion with zero length encountered in getRPYFromPose.");
-    rpy.roll = rpy.pitch = rpy.yaw = 0.0;
-    return rpy;
-  }
-
-  q.normalize();
-  tf2::Matrix3x3 m(q);
-  m.getRPY(rpy.roll, rpy.pitch, rpy.yaw);
-
-  return rpy;
-}
-
-double CartesianControlJoystick::restrictAngleWithinPI(const double& angle)
-{
-  if (angle > M_PI)
-    return angle - 2 * M_PI;
-  else if (angle < -M_PI)
-    return angle + 2 * M_PI;
-  return angle;
-}
-
-geometry_msgs::Vector3 CartesianControlJoystick::getPositionDifference()
-{
-  geometry_msgs::Vector3 position_difference;
-  position_difference.x = current_left_joy_pose_.pose.position.x - initial_left_joy_pose_.pose.position.x;
-  position_difference.y = current_left_joy_pose_.pose.position.y - initial_left_joy_pose_.pose.position.y;
-  position_difference.z = current_left_joy_pose_.pose.position.z - initial_left_joy_pose_.pose.position.z;
-  return position_difference;
-}
-
-RPY CartesianControlJoystick::getOrientationDifference()
-{
-  RPY initial_left_joy_rpy = getRPYFromPose(initial_left_joy_pose_);
-  RPY current_left_joy_rpy = getRPYFromPose(current_left_joy_pose_);
-  RPY orientation_difference = {
-      this->restrictAngleWithinPI(current_left_joy_rpy.roll - initial_left_joy_rpy.roll),
-      this->restrictAngleWithinPI(current_left_joy_rpy.pitch - initial_left_joy_rpy.pitch),
-      this->restrictAngleWithinPI(current_left_joy_rpy.yaw - initial_left_joy_rpy.yaw)
-  };
-  return orientation_difference;
+  this->publishTargetGripperPose(target_gripper_pose_);
 }
 
 void CartesianControlJoystick::calculateTargetGripperPose()
@@ -127,6 +47,9 @@ void CartesianControlJoystick::calculateTargetGripperPose()
     target_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x + scaled_position_difference.x;
     target_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.y;
     target_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
+  }
+  else {
+    this->setGripperPositionToCurrent();
   }
 
   if (is_orientation_change_enabled_) {
@@ -168,7 +91,99 @@ void CartesianControlJoystick::calculateTargetGripperPose()
     target_gripper_pose_.pose.orientation.z = target_gripper_quaternion.z();
     target_gripper_pose_.pose.orientation.w = target_gripper_quaternion.w();
   }
+  else {
+    this->setGripperOrientationToCurrent();
+  }
 }
+
+/******************************************************
+ *                  Private members                   *  
+ ****************************************************** */
+
+// 
+// initialization
+// 
+
+void CartesianControlJoystick::parseParameters()
+{
+  ros::NodeHandle pnh("~");
+  pnh.param("position_scale", position_scale_, 0.8);
+  pnh.param("orientation_scale", orientation_scale_, 0.8);
+}
+
+void CartesianControlJoystick::initializePublishersAndSubscribers()
+{
+  target_frame_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>("/target_frame", 1);
+  gripper_publisher_ = nh_.advertise<std_msgs::Bool>("/gripper/cmd_gripper", 1);
+  
+  left_joy_pose_subscriber_ = nh_.subscribe("/unity/joy_pose/left", 1, &CartesianControlJoystick::leftJoyPoseCallback, this);
+  left_joy_subscriber_ = nh_.subscribe("/unity/joy/left", 1, &CartesianControlJoystick::leftJoyCallback, this);
+}
+
+void CartesianControlJoystick::setInitialGripperPose()
+{
+  initial_gripper_pose_ = target_gripper_pose_ = kInitialGripperPose;
+}
+
+//
+// main operations (supports calculateTargetGripperPose())
+//
+
+geometry_msgs::Vector3 CartesianControlJoystick::getPositionDifference()
+{
+  geometry_msgs::Vector3 position_difference;
+  position_difference.x = current_left_joy_pose_.pose.position.x - initial_left_joy_pose_.pose.position.x;
+  position_difference.y = current_left_joy_pose_.pose.position.y - initial_left_joy_pose_.pose.position.y;
+  position_difference.z = current_left_joy_pose_.pose.position.z - initial_left_joy_pose_.pose.position.z;
+  return position_difference;
+}
+
+RPY CartesianControlJoystick::getOrientationDifference()
+{
+  RPY initial_left_joy_rpy = getRPYFromPose(initial_left_joy_pose_);
+  RPY current_left_joy_rpy = getRPYFromPose(current_left_joy_pose_);
+  RPY orientation_difference = {
+      this->restrictAngleWithinPI(current_left_joy_rpy.roll - initial_left_joy_rpy.roll),
+      this->restrictAngleWithinPI(current_left_joy_rpy.pitch - initial_left_joy_rpy.pitch),
+      this->restrictAngleWithinPI(current_left_joy_rpy.yaw - initial_left_joy_rpy.yaw)
+  };
+  return orientation_difference;
+}
+
+RPY CartesianControlJoystick::getRPYFromPose(const geometry_msgs::PoseStamped& pose)
+{
+  RPY rpy;
+  const double x = pose.pose.orientation.x;
+  const double y = pose.pose.orientation.y;
+  const double z = pose.pose.orientation.z;
+  const double w = pose.pose.orientation.w;
+
+  tf2::Quaternion q(x, y, z, w);
+  if (q.length2() == 0.0) {
+    ROS_ERROR("Invalid quaternion with zero length encountered in getRPYFromPose.");
+    rpy.roll = rpy.pitch = rpy.yaw = 0.0;
+    return rpy;
+  }
+
+  q.normalize();
+  tf2::Matrix3x3 m(q);
+  m.getRPY(rpy.roll, rpy.pitch, rpy.yaw);
+
+  return rpy;
+}
+
+double CartesianControlJoystick::restrictAngleWithinPI(const double& angle)
+{
+  if (angle > M_PI)
+    return angle - 2 * M_PI;
+  else if (angle < -M_PI)
+    return angle + 2 * M_PI;
+  return angle;
+}
+
+//
+// callbacks
+//
 
 void CartesianControlJoystick::leftJoyPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
 {
@@ -197,14 +212,14 @@ void CartesianControlJoystick::leftJoyCallback(const sensor_msgs::Joy::ConstPtr&
       // [1] Y button: Reset the gripper pose to the initial one.
       if (msg->buttons[1] == 1) {
         target_gripper_pose_ = kInitialGripperPose;
-        target_frame_pub_.publish(target_gripper_pose_);
+        target_frame_publisher_.publish(target_gripper_pose_);
         ROS_INFO_STREAM_THROTTLE(1, "Reset to the initial gripper pose.");
       }
     case 1:
       // [0] X button: Toggle the gripper state.
       if (msg->buttons[0] == 1) {
         gripper_.data = !gripper_.data;
-        gripper_pub_.publish(gripper_);
+        gripper_publisher_.publish(gripper_);
       }
       break;
     default:

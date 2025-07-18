@@ -16,7 +16,8 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   sensor_msgs
   std_msgs
-  tf
+  tf2
+  tf2_ros
 )
 
 ################################################################################
@@ -42,7 +43,8 @@ catkin_package(
     roscpp
     sensor_msgs
     std_msgs
-    tf
+    tf2
+    tf2_ros
   INCLUDE_DIRS include
 )
 
@@ -55,20 +57,22 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
-add_library(cartesian_control_lib
+add_executable(test_cartesian_control_keyboard
+  test/test_cartesian_control_keyboard.cpp
   src/cartesian_control_keyboard.cpp
-  src/cartesian_control_joystick.cpp
-  src/cartesian_control_object_grasping.cpp
 )
+target_link_libraries(test_cartesian_control_keyboard ${catkin_LIBRARIES})
 
-add_executable(test_cartesian_control_keyboard test/test_cartesian_control_keyboard.cpp)
-target_link_libraries(test_cartesian_control_keyboard ${catkin_LIBRARIES} cartesian_control_lib)
+add_executable(test_cartesian_control_joystick
+  test/test_cartesian_control_joystick.cpp
+  src/cartesian_control_joystick.cpp
+)
+target_link_libraries(test_cartesian_control_joystick ${catkin_LIBRARIES})
 
-add_executable(test_cartesian_control_joystick test/test_cartesian_control_joystick.cpp)
-target_link_libraries(test_cartesian_control_joystick ${catkin_LIBRARIES} cartesian_control_lib)
-
-add_executable(test_object_grasping test/test_object_grasping.cpp)
-target_link_libraries(test_object_grasping ${catkin_LIBRARIES} cartesian_control_lib)
+add_executable(test_object_grasping
+  test/test_object_grasping.cpp
+  src/cartesian_control_object_grasping.cpp)
+target_link_libraries(test_object_grasping ${catkin_LIBRARIES})
 
 ################################################################################
 # Install
