@@ -57,22 +57,22 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
-add_executable(test_cartesian_control_keyboard
-  test/test_cartesian_control_keyboard.cpp
-  src/cartesian_control_keyboard.cpp
+add_executable(test_joystick_teleoperation
+  test/test_joystick_teleoperation.cpp
+  src/cartesian_control/joystick_teleoperation.cpp
 )
-target_link_libraries(test_cartesian_control_keyboard ${catkin_LIBRARIES})
+target_link_libraries(test_joystick_teleoperation ${catkin_LIBRARIES})
 
-add_executable(test_cartesian_control_joystick
-  test/test_cartesian_control_joystick.cpp
-  src/cartesian_control_joystick.cpp
+add_executable(test_keyboard_teleoperation
+  test/test_keyboard_teleoperation.cpp
+  src/cartesian_control/keyboard_teleoperation.cpp
 )
-target_link_libraries(test_cartesian_control_joystick ${catkin_LIBRARIES})
+target_link_libraries(test_keyboard_teleoperation ${catkin_LIBRARIES})
 
-add_executable(test_object_grasping
-  test/test_object_grasping.cpp
-  src/cartesian_control_object_grasping.cpp)
-target_link_libraries(test_object_grasping ${catkin_LIBRARIES})
+add_executable(test_detected_object_grasping
+  test/test_detected_object_grasping.cpp
+  src/cartesian_control/object_grasping.cpp)
+target_link_libraries(test_detected_object_grasping ${catkin_LIBRARIES})
 
 ################################################################################
 # Install

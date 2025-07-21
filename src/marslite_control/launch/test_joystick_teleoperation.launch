@@ -8,7 +8,8 @@
   <arg name="debug_msg_enabled" default="false"/>
   <arg name="position_scale" default="0.8"/>
   <arg name="orientation_scale" default="0.8"/>
-  <node name="test_cartesian_control_joystick" pkg="marslite_control" type="test_cartesian_control_joystick" output="screen">
+  <node name="test_joystick_teleoperation" pkg="marslite_control"
+        type="test_joystick_teleoperation" output="screen">
     <param name="debug_msg_enabled" value="$(arg debug_msg_enabled)"/>
     <param name="position_scale" value="$(arg position_scale)"/>
     <param name="orientation_scale" value="$(arg orientation_scale)"/>

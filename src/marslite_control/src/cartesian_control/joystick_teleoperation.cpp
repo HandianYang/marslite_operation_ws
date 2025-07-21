@@ -1,10 +1,10 @@
-#include "cartesian_control/cartesian_control_joystick.h"
+#include "cartesian_control/joystick_teleoperation.h"
 
 /******************************************************
  *                  Constructors                      *  
  ****************************************************** */
 
-CartesianControlJoystick::CartesianControlJoystick(const ros::NodeHandle& nh)
+JoystickTeleoperationWrapper::JoystickTeleoperationWrapper(const ros::NodeHandle& nh)
   : nh_(nh), rate_(ros::Rate(25)), is_begin_teleoperation_(false),
     is_position_change_enabled_(false), is_orientation_change_enabled_(false)
 {
@@ -17,7 +17,7 @@ CartesianControlJoystick::CartesianControlJoystick(const ros::NodeHandle& nh)
  *                  Public members                    *  
  ****************************************************** */
 
-void CartesianControlJoystick::teleoperateOnce()
+void JoystickTeleoperationWrapper::teleoperateOnce()
 {
   base_link_to_tm_gripper_transform_ = tf2_listener_.lookupTransform("base_link", "tm_gripper");
   if (is_position_change_enabled_ || is_orientation_change_enabled_) {
@@ -35,7 +35,7 @@ void CartesianControlJoystick::teleoperateOnce()
   this->publishTargetGripperPose(target_gripper_pose_);
 }
 
-void CartesianControlJoystick::calculateTargetGripperPose()
+void JoystickTeleoperationWrapper::calculateTargetGripperPose()
 {
   if (is_position_change_enabled_) {
     geometry_msgs::Vector3 position_difference = this->getPositionDifference();
@@ -55,13 +55,13 @@ void CartesianControlJoystick::calculateTargetGripperPose()
   if (is_orientation_change_enabled_) {
     RPY orientation_difference = this->getOrientationDifference();
 
-    // [NOTE] The transformation from `base_link` to `tm_tip_link` is applied here`:
-    //   | base_link | tm_tip_link |
-    //   |-----------|-------------|
-    //   |  +-roll   |   -+pitch   |
-    //   |  +-pitch  |   +-roll    |
-    //   |  +-yaw    |   +-yaw     |
-    // 
+    // [NOTE] The transformation from `/base_link` to `/tm_gripper` is applied here`:
+    //   | /base_link | /tm_gripper |
+    //   |------------|-------------|
+    //   |   +-roll   |   -+pitch   |
+    //   |   +-pitch  |   +-roll    |
+    //   |   +-yaw    |   +-yaw     |
+    //
     RPY scaled_orientation_difference;
     scaled_orientation_difference.roll = orientation_difference.pitch * orientation_scale_;
     scaled_orientation_difference.pitch = 0;
@@ -104,23 +104,23 @@ void CartesianControlJoystick::calculateTargetGripperPose()
 // initialization
 // 
 
-void CartesianControlJoystick::parseParameters()
+void JoystickTeleoperationWrapper::parseParameters()
 {
   ros::NodeHandle pnh("~");
   pnh.param("position_scale", position_scale_, 0.8);
   pnh.param("orientation_scale", orientation_scale_, 0.8);
 }
 
-void CartesianControlJoystick::initializePublishersAndSubscribers()
+void JoystickTeleoperationWrapper::initializePublishersAndSubscribers()
 {
   target_frame_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>("/target_frame", 1);
   gripper_publisher_ = nh_.advertise<std_msgs::Bool>("/gripper/cmd_gripper", 1);
   
-  left_joy_pose_subscriber_ = nh_.subscribe("/unity/joy_pose/left", 1, &CartesianControlJoystick::leftJoyPoseCallback, this);
-  left_joy_subscriber_ = nh_.subscribe("/unity/joy/left", 1, &CartesianControlJoystick::leftJoyCallback, this);
+  left_joy_pose_subscriber_ = nh_.subscribe("/unity/joy_pose/left", 1, &JoystickTeleoperationWrapper::leftJoyPoseCallback, this);
+  left_joy_subscriber_ = nh_.subscribe("/unity/joy/left", 1, &JoystickTeleoperationWrapper::leftJoyCallback, this);
 }
 
-void CartesianControlJoystick::setInitialGripperPose()
+void JoystickTeleoperationWrapper::setInitialGripperPose()
 {
   initial_gripper_pose_ = target_gripper_pose_ = kInitialGripperPose;
 }
@@ -129,7 +129,7 @@ void CartesianControlJoystick::setInitialGripperPose()
 // main operations (supports calculateTargetGripperPose())
 //
 
-geometry_msgs::Vector3 CartesianControlJoystick::getPositionDifference()
+geometry_msgs::Vector3 JoystickTeleoperationWrapper::getPositionDifference()
 {
   geometry_msgs::Vector3 position_difference;
   position_difference.x = current_left_joy_pose_.pose.position.x - initial_left_joy_pose_.pose.position.x;
@@ -138,7 +138,7 @@ geometry_msgs::Vector3 CartesianControlJoystick::getPositionDifference()
   return position_difference;
 }
 
-RPY CartesianControlJoystick::getOrientationDifference()
+RPY JoystickTeleoperationWrapper::getOrientationDifference()
 {
   RPY initial_left_joy_rpy = getRPYFromPose(initial_left_joy_pose_);
   RPY current_left_joy_rpy = getRPYFromPose(current_left_joy_pose_);
@@ -150,7 +150,7 @@ RPY CartesianControlJoystick::getOrientationDifference()
   return orientation_difference;
 }
 
-RPY CartesianControlJoystick::getRPYFromPose(const geometry_msgs::PoseStamped& pose)
+RPY JoystickTeleoperationWrapper::getRPYFromPose(const geometry_msgs::PoseStamped& pose)
 {
   RPY rpy;
   const double x = pose.pose.orientation.x;
@@ -172,7 +172,7 @@ RPY CartesianControlJoystick::getRPYFromPose(const geometry_msgs::PoseStamped& p
   return rpy;
 }
 
-double CartesianControlJoystick::restrictAngleWithinPI(const double& angle)
+double JoystickTeleoperationWrapper::restrictAngleWithinPI(const double& angle)
 {
   if (angle > M_PI)
     return angle - 2 * M_PI;
@@ -185,12 +185,12 @@ double CartesianControlJoystick::restrictAngleWithinPI(const double& angle)
 // callbacks
 //
 
-void CartesianControlJoystick::leftJoyPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
+void JoystickTeleoperationWrapper::leftJoyPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
 {
   current_left_joy_pose_.pose = msg->pose;
 }
 
-void CartesianControlJoystick::leftJoyCallback(const sensor_msgs::Joy::ConstPtr& msg)
+void JoystickTeleoperationWrapper::leftJoyCallback(const sensor_msgs::Joy::ConstPtr& msg)
 {
   // axes[0] and axes[1] are for mobile platform teleoperation
   switch (msg->axes.size()) {

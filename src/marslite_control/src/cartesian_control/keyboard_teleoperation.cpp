@@ -1,25 +1,39 @@
-#include "cartesian_control/cartesian_control_keyboard.h"
+#include "cartesian_control/keyboard_teleoperation.h"
+
 #include <iomanip>
 #include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/time.h>
 
-CartesianControlKeyboard::CartesianControlKeyboard(const ros::NodeHandle& nh)
-  : nh_(nh), input_key_('\0'), rate_(ros::Rate(60)), is_stopped_(false), is_position_control_(true)
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+
+
+/******************************************************
+ *                  Constructors                      *  
+ ****************************************************** */
+
+KeyboardTeleoperationWrapper::KeyboardTeleoperationWrapper(const ros::NodeHandle& nh)
+  : nh_(nh), input_key_('\0'), rate_(ros::Rate(60)),
+  is_stopped_(false), is_position_control_(true)
 {
-  target_frame_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/target_frame", 10);
+  target_frame_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>("/target_frame", 10);
   target_pose_ = kInitialGripperPose;
   ROS_INFO_STREAM("Switch to position control mode.");
 }
 
-void CartesianControlKeyboard::run()
+/******************************************************
+ *                  Public members                    *  
+ ****************************************************** */
+
+void KeyboardTeleoperationWrapper::teleoperate()
 {
   while (ros::ok() && !is_stopped_) {
-    getKeyboardInput();
+    this->getKeyboardInput();
     if (input_key_ != '\0') {
-      processInput();
-      publishPose();
+      this->processInput();
+      this->publishPose();
     }
     
     rate_.sleep();
@@ -27,44 +41,11 @@ void CartesianControlKeyboard::run()
   }
 }
 
-RPY CartesianControlKeyboard::convertQuaternionMsgToRPY(const geometry_msgs::Quaternion& quaternion)
-{
-  RPY rpy;
-  tf2::Quaternion q(
-      quaternion.x,
-      quaternion.y,
-      quaternion.z,
-      quaternion.w
-  );
-  if (q.length2() == 0.0) {
-    ROS_ERROR("Invalid quaternion with zero length encountered in getRPYFromPose.");
-    rpy.roll = rpy.pitch = rpy.yaw = 0.0;
-    return rpy;
-  }
+/******************************************************
+ *                  Private members                   *  
+ ****************************************************** */
 
-  q.normalize();
-  tf2::Matrix3x3 m(q);
-  m.getRPY(rpy.roll, rpy.pitch, rpy.yaw);
-
-  return rpy;
-}
-
-geometry_msgs::Quaternion CartesianControlKeyboard::convertRPYToQuaternionMsg(const RPY& rpy)
-{
-  tf2::Quaternion q;
-  q.setRPY(rpy.roll, rpy.pitch, rpy.yaw);
-  q.normalize();
-
-  geometry_msgs::Quaternion quaternion_msg;
-  quaternion_msg.x = q.x();
-  quaternion_msg.y = q.y();
-  quaternion_msg.z = q.z();
-  quaternion_msg.w = q.w();
-
-  return quaternion_msg;
-}
-
-void CartesianControlKeyboard::getKeyboardInput()
+void KeyboardTeleoperationWrapper::getKeyboardInput()
 {
   struct termios oldt, newt;
   input_key_ = '\0';
@@ -103,7 +84,7 @@ void CartesianControlKeyboard::getKeyboardInput()
   tcsetattr(fd, TCSANOW, &oldt);
 }
 
-void CartesianControlKeyboard::processInput()
+void KeyboardTeleoperationWrapper::processInput()
 {
   static ros::Time last_switch_time = ros::Time(0);
   switch (input_key_)
@@ -145,7 +126,12 @@ void CartesianControlKeyboard::processInput()
   }
 }
 
-void CartesianControlKeyboard::processInputInPositionControl()
+void KeyboardTeleoperationWrapper::publishPose()
+{
+  target_frame_publisher_.publish(target_pose_);
+}
+
+void KeyboardTeleoperationWrapper::processInputInPositionControl()
 {
   switch (input_key_)
   {
@@ -176,28 +162,30 @@ void CartesianControlKeyboard::processInputInPositionControl()
   }
 }
 
-void CartesianControlKeyboard::processInputInOrientationControl()
+void KeyboardTeleoperationWrapper::processInputInOrientationControl()
 {
+  // [NOTE] The transformation from `/base_link` to `/tm_gripper` is applied here`:
+  //   | /base_link | /tm_gripper |
+  //   |------------|-------------|
+  //   |   +-roll   |   -+pitch   |
+  //   |   +-pitch  |   +-roll    |
+  //   |   +-yaw    |   +-yaw     |
   switch (input_key_)
   {
     case 'w':
     case 'W':
-      // target_pose_rpy_.roll += M_PI / 180.0;
       target_pose_rpy_.pitch -= M_PI / 180.0;
       break;
     case 's':
     case 'S':
-      // target_pose_rpy_.roll -= M_PI / 180.0;
       target_pose_rpy_.pitch += M_PI / 180.0;
       break;
     case 'a':
     case 'A':
-      // target_pose_rpy_.pitch += M_PI / 180.0;
       target_pose_rpy_.roll += M_PI / 180.0;
       break;
     case 'd':
     case 'D':
-      // target_pose_rpy_.pitch -= M_PI / 180.0;
       target_pose_rpy_.roll -= M_PI / 180.0;
       break;
     case 'r':
@@ -213,7 +201,39 @@ void CartesianControlKeyboard::processInputInOrientationControl()
   target_pose_.pose.orientation = convertRPYToQuaternionMsg(target_pose_rpy_);
 }
 
-void CartesianControlKeyboard::publishPose()
+RPY KeyboardTeleoperationWrapper::convertQuaternionMsgToRPY(const geometry_msgs::Quaternion& quaternion)
 {
-  target_frame_pub_.publish(target_pose_);
+  RPY rpy;
+  tf2::Quaternion q(
+      quaternion.x,
+      quaternion.y,
+      quaternion.z,
+      quaternion.w
+  );
+  if (q.length2() == 0.0) {
+    ROS_ERROR("Invalid quaternion with zero length encountered in getRPYFromPose.");
+    rpy.roll = rpy.pitch = rpy.yaw = 0.0;
+    return rpy;
+  }
+
+  q.normalize();
+  tf2::Matrix3x3 m(q);
+  m.getRPY(rpy.roll, rpy.pitch, rpy.yaw);
+
+  return rpy;
+}
+
+geometry_msgs::Quaternion KeyboardTeleoperationWrapper::convertRPYToQuaternionMsg(const RPY& rpy)
+{
+  tf2::Quaternion q;
+  q.setRPY(rpy.roll, rpy.pitch, rpy.yaw);
+  q.normalize();
+
+  geometry_msgs::Quaternion quaternion_msg;
+  quaternion_msg.x = q.x();
+  quaternion_msg.y = q.y();
+  quaternion_msg.z = q.z();
+  quaternion_msg.w = q.w();
+
+  return quaternion_msg;
 }
