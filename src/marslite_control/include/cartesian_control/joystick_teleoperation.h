@@ -17,8 +17,7 @@ class JoystickTeleoperationWrapper {
 public:
   explicit JoystickTeleoperationWrapper(const ros::NodeHandle& nh = ros::NodeHandle());
 
-  inline void teleoperate()
-  {
+  inline void teleoperate() {
     while (nh_.ok()) {
       this->teleoperateOnce();
       rate_.sleep();
@@ -27,29 +26,6 @@ public:
   }
   void teleoperateOnce();
   void calculateTargetGripperPose();
-  
-  inline void setGripperPositionToCurrent()
-  {
-    target_gripper_pose_.pose.position.x = base_link_to_tm_gripper_transform_.transform.translation.x;
-    target_gripper_pose_.pose.position.y = base_link_to_tm_gripper_transform_.transform.translation.y;
-    target_gripper_pose_.pose.position.z = base_link_to_tm_gripper_transform_.transform.translation.z;
-  }
-
-  inline void setGripperOrientationToCurrent()
-  {
-    target_gripper_pose_.pose.orientation = base_link_to_tm_gripper_transform_.transform.rotation;
-  }
-
-  inline void publishTargetGripperPose(
-      const geometry_msgs::PoseStamped& target_gripper_pose = kInitialGripperPose)
-  {
-    target_frame_publisher_.publish(target_gripper_pose);
-  }
-
-  inline geometry_msgs::PoseStamped getTargetGripperPose() const
-  {
-    return target_gripper_pose_;
-  }
 
 private:
   const double kTriggerThreshold = 0.95;
@@ -57,19 +33,19 @@ private:
   // ROS mechanisms
   ros::NodeHandle nh_;
   ros::Rate rate_;
-  ros::Publisher target_frame_publisher_;
-  ros::Publisher gripper_publisher_;
+  ros::Publisher desired_gripper_pose_publisher_;
+  ros::Publisher desired_gripper_status_publisher_;
   ros::Subscriber left_joy_pose_subscriber_;
   ros::Subscriber left_joy_subscriber_;
   Tf2ListenerWrapper tf2_listener_;
 
   // ROS messages
+  geometry_msgs::TransformStamped base_link_to_tm_gripper_transform_;
   geometry_msgs::PoseStamped initial_left_joy_pose_;
   geometry_msgs::PoseStamped current_left_joy_pose_;
   geometry_msgs::PoseStamped initial_gripper_pose_;
-  geometry_msgs::PoseStamped target_gripper_pose_;
-  geometry_msgs::TransformStamped base_link_to_tm_gripper_transform_;
-  std_msgs::Bool gripper_;
+  geometry_msgs::PoseStamped desired_gripper_pose_;
+  std_msgs::Bool desired_gripper_status_;
 
   // flags
   bool is_begin_teleoperation_;
@@ -83,10 +59,16 @@ private:
 private:
   // initialization
   void parseParameters();
-  void initializePublishersAndSubscribers();
+  void initializePublishers();
+  void initializeSubscribers();
   void setInitialGripperPose();
 
-  // main operations (supports calculateTargetGripperPose())
+  // utility operations (supports teleoperateOnce())
+  void stopGripperPositionalMovement();
+  void stopGripperOrientationalMovement();
+  void publishDesiredGripperPose(const geometry_msgs::PoseStamped& desired_gripper_pose);
+
+  // utility operations (supports calculateTargetGripperPose())
   geometry_msgs::Vector3 getPositionDifference();
   RPY getOrientationDifference();
   RPY getRPYFromPose(const geometry_msgs::PoseStamped& pose);

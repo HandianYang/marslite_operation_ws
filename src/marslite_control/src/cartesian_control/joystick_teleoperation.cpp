@@ -9,7 +9,8 @@ JoystickTeleoperationWrapper::JoystickTeleoperationWrapper(const ros::NodeHandle
     is_position_change_enabled_(false), is_orientation_change_enabled_(false)
 {
   this->parseParameters();
-  this->initializePublishersAndSubscribers();
+  this->initializePublishers();
+  this->initializeSubscribers();
   this->setInitialGripperPose();
 }
 
@@ -27,12 +28,12 @@ void JoystickTeleoperationWrapper::teleoperateOnce()
     }
     this->calculateTargetGripperPose();
   } else {
-    this->setGripperPositionToCurrent();
-    this->setGripperOrientationToCurrent();
-    initial_gripper_pose_ = target_gripper_pose_;
+    this->stopGripperPositionalMovement();
+    this->stopGripperOrientationalMovement();
+    initial_gripper_pose_ = desired_gripper_pose_;
     is_begin_teleoperation_ = true;
   }
-  this->publishTargetGripperPose(target_gripper_pose_);
+  this->publishDesiredGripperPose(desired_gripper_pose_);
 }
 
 void JoystickTeleoperationWrapper::calculateTargetGripperPose()
@@ -44,12 +45,12 @@ void JoystickTeleoperationWrapper::calculateTargetGripperPose()
     scaled_position_difference.y = position_difference.y * position_scale_;
     scaled_position_difference.z = position_difference.z * position_scale_;
 
-    target_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x + scaled_position_difference.x;
-    target_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.y;
-    target_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
+    desired_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x + scaled_position_difference.x;
+    desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.y;
+    desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
   }
   else {
-    this->setGripperPositionToCurrent();
+    this->stopGripperPositionalMovement();
   }
 
   if (is_orientation_change_enabled_) {
@@ -86,13 +87,13 @@ void JoystickTeleoperationWrapper::calculateTargetGripperPose()
         target_gripper_rpy.yaw
     );
     target_gripper_quaternion.normalize();
-    target_gripper_pose_.pose.orientation.x = target_gripper_quaternion.x();
-    target_gripper_pose_.pose.orientation.y = target_gripper_quaternion.y();
-    target_gripper_pose_.pose.orientation.z = target_gripper_quaternion.z();
-    target_gripper_pose_.pose.orientation.w = target_gripper_quaternion.w();
+    desired_gripper_pose_.pose.orientation.x = target_gripper_quaternion.x();
+    desired_gripper_pose_.pose.orientation.y = target_gripper_quaternion.y();
+    desired_gripper_pose_.pose.orientation.z = target_gripper_quaternion.z();
+    desired_gripper_pose_.pose.orientation.w = target_gripper_quaternion.w();
   }
   else {
-    this->setGripperOrientationToCurrent();
+    this->stopGripperOrientationalMovement();
   }
 }
 
@@ -111,22 +112,46 @@ void JoystickTeleoperationWrapper::parseParameters()
   pnh.param("orientation_scale", orientation_scale_, 0.8);
 }
 
-void JoystickTeleoperationWrapper::initializePublishersAndSubscribers()
-{
-  target_frame_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>("/target_frame", 1);
-  gripper_publisher_ = nh_.advertise<std_msgs::Bool>("/gripper/cmd_gripper", 1);
-  
-  left_joy_pose_subscriber_ = nh_.subscribe("/unity/joy_pose/left", 1, &JoystickTeleoperationWrapper::leftJoyPoseCallback, this);
-  left_joy_subscriber_ = nh_.subscribe("/unity/joy/left", 1, &JoystickTeleoperationWrapper::leftJoyCallback, this);
+void JoystickTeleoperationWrapper::initializePublishers() {
+  desired_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
+      "/cartesian_control/user_desired_gripper_pose", 1);
+  desired_gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(
+      "/cartesian_control/user_desired_gripper_status", 1);
+}
+
+void JoystickTeleoperationWrapper::initializeSubscribers() {
+  left_joy_pose_subscriber_ = nh_.subscribe("/unity/joy_pose/left", 1,
+      &JoystickTeleoperationWrapper::leftJoyPoseCallback, this);
+  left_joy_subscriber_ = nh_.subscribe("/unity/joy/left", 1,
+      &JoystickTeleoperationWrapper::leftJoyCallback, this);
 }
 
 void JoystickTeleoperationWrapper::setInitialGripperPose()
 {
-  initial_gripper_pose_ = target_gripper_pose_ = kInitialGripperPose;
+  initial_gripper_pose_ = desired_gripper_pose_ = kInitialGripperPose;
 }
 
 //
-// main operations (supports calculateTargetGripperPose())
+// utility operations (supports teleoperateOnce())
+//
+
+void JoystickTeleoperationWrapper::stopGripperPositionalMovement() {
+  desired_gripper_pose_.pose.position.x = base_link_to_tm_gripper_transform_.transform.translation.x;
+  desired_gripper_pose_.pose.position.y = base_link_to_tm_gripper_transform_.transform.translation.y;
+  desired_gripper_pose_.pose.position.z = base_link_to_tm_gripper_transform_.transform.translation.z;
+}
+
+void JoystickTeleoperationWrapper::stopGripperOrientationalMovement() {
+  desired_gripper_pose_.pose.orientation = base_link_to_tm_gripper_transform_.transform.rotation;
+}
+
+void JoystickTeleoperationWrapper::publishDesiredGripperPose(
+    const geometry_msgs::PoseStamped& desired_gripper_pose) {
+  desired_gripper_pose_publisher_.publish(desired_gripper_pose);
+}
+
+//
+// utility operations (supports calculateTargetGripperPose())
 //
 
 geometry_msgs::Vector3 JoystickTeleoperationWrapper::getPositionDifference()
@@ -210,16 +235,19 @@ void JoystickTeleoperationWrapper::leftJoyCallback(const sensor_msgs::Joy::Const
   switch (msg->buttons.size()) {
     case 2:
       // [1] Y button: Reset the gripper pose to the initial one.
-      if (msg->buttons[1] == 1) {
-        target_gripper_pose_ = kInitialGripperPose;
-        target_frame_publisher_.publish(target_gripper_pose_);
-        ROS_INFO_STREAM_THROTTLE(1, "Reset to the initial gripper pose.");
-      }
+      // if (msg->buttons[1] == 1) {
+      //   desired_gripper_pose_ = kInitialGripperPose;
+      //   desired_gripper_pose_publisher_.publish(desired_gripper_pose_);
+      //   ROS_INFO_STREAM_THROTTLE(1, "Reset to the initial gripper pose.");
+      // }
     case 1:
-      // [0] X button: Toggle the gripper state.
-      if (msg->buttons[0] == 1) {
-        gripper_.data = !gripper_.data;
-        gripper_publisher_.publish(gripper_);
+      // [0] X button: Close/Open the gripper
+      if (msg->buttons[0] == 1 && !desired_gripper_status_.data) {
+        desired_gripper_status_.data = true;
+        desired_gripper_status_publisher_.publish(desired_gripper_status_);
+      } else if (msg->buttons[0] == 0 && desired_gripper_status_.data) {
+        desired_gripper_status_.data = false;
+        desired_gripper_status_publisher_.publish(desired_gripper_status_);
       }
       break;
     default:

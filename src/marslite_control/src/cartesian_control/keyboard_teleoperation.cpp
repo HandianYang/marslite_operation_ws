@@ -15,11 +15,11 @@
  ****************************************************** */
 
 KeyboardTeleoperationWrapper::KeyboardTeleoperationWrapper(const ros::NodeHandle& nh)
-  : nh_(nh), input_key_('\0'), rate_(ros::Rate(60)),
-  is_stopped_(false), is_position_control_(true)
-{
-  target_frame_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>("/target_frame", 10);
-  target_pose_ = kInitialGripperPose;
+    : nh_(nh), input_key_('\0'), rate_(ros::Rate(25)),
+      is_stopped_(false), is_position_control_(true) {
+  this->initializePublishers();
+  this->setInitialGripperPose();
+
   ROS_INFO_STREAM("Switch to position control mode.");
 }
 
@@ -27,9 +27,8 @@ KeyboardTeleoperationWrapper::KeyboardTeleoperationWrapper(const ros::NodeHandle
  *                  Public members                    *  
  ****************************************************** */
 
-void KeyboardTeleoperationWrapper::teleoperate()
-{
-  while (ros::ok() && !is_stopped_) {
+void KeyboardTeleoperationWrapper::teleoperate() {
+  while (nh_.ok() && !is_stopped_) {
     this->getKeyboardInput();
     if (input_key_ != '\0') {
       this->processInput();
@@ -45,8 +44,18 @@ void KeyboardTeleoperationWrapper::teleoperate()
  *                  Private members                   *  
  ****************************************************** */
 
-void KeyboardTeleoperationWrapper::getKeyboardInput()
-{
+void KeyboardTeleoperationWrapper::initializePublishers() {
+  desired_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
+      "/cartesian_control/user_desired_gripper_pose", 10);
+  desired_gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(
+      "/cartesian_control/user_desired_gripper_status", 10);
+}
+
+void KeyboardTeleoperationWrapper::setInitialGripperPose() {
+  desired_gripper_pose_ = kInitialGripperPose;
+}
+
+void KeyboardTeleoperationWrapper::getKeyboardInput() {
   struct termios oldt, newt;
   input_key_ = '\0';
 
@@ -84,11 +93,9 @@ void KeyboardTeleoperationWrapper::getKeyboardInput()
   tcsetattr(fd, TCSANOW, &oldt);
 }
 
-void KeyboardTeleoperationWrapper::processInput()
-{
+void KeyboardTeleoperationWrapper::processInput() {
   static ros::Time last_switch_time = ros::Time(0);
-  switch (input_key_)
-  {
+  switch (input_key_) {
     // Q/q: Stop the program
     case 'q':
     case 'Q':
@@ -105,59 +112,61 @@ void KeyboardTeleoperationWrapper::processInput()
         if (is_position_control_) {
           ROS_INFO_STREAM("Switch to position control mode.");
         } else {
-          target_pose_rpy_ = this->convertQuaternionMsgToRPY(target_pose_.pose.orientation);
+          desired_gripper_pose_rpy_ = this->convertQuaternionMsgToRPY(desired_gripper_pose_.pose.orientation);
           ROS_INFO_STREAM("Switch to orientation control mode.");
         }
       }
       break;
     // space: Reset the gripper pose to the initial pose
     case ' ':
-      target_pose_ = kInitialGripperPose;
-      target_pose_rpy_ = this->convertQuaternionMsgToRPY(target_pose_.pose.orientation);
+      desired_gripper_pose_ = kInitialGripperPose;
+      desired_gripper_pose_rpy_ = this->convertQuaternionMsgToRPY(desired_gripper_pose_.pose.orientation);
       ROS_INFO_STREAM("Reset to the initial gripper pose.");
+      break;
+    case 'g':
+    case 'G':
+      desired_gripper_status_.data = !desired_gripper_status_.data;
+      desired_gripper_status_publisher_.publish(desired_gripper_status_);
       break;
     default:
       if (is_position_control_) {
-        processInputInPositionControl();
+        this->processInputInPositionControl();
       } else {
-        processInputInOrientationControl();
+        this->processInputInOrientationControl();
       }
       break;
   }
 }
 
-void KeyboardTeleoperationWrapper::publishPose()
-{
-  target_frame_publisher_.publish(target_pose_);
+void KeyboardTeleoperationWrapper::publishPose() {
+  desired_gripper_pose_publisher_.publish(desired_gripper_pose_);
 }
 
-void KeyboardTeleoperationWrapper::processInputInPositionControl()
-{
-  switch (input_key_)
-  {
+void KeyboardTeleoperationWrapper::processInputInPositionControl() {
+  switch (input_key_) {
     case 'w':
     case 'W':
-      target_pose_.pose.position.x += 0.01;
+      desired_gripper_pose_.pose.position.x += 0.01;
       break;
     case 's':
     case 'S':
-      target_pose_.pose.position.x -= 0.01;
+      desired_gripper_pose_.pose.position.x -= 0.01;
       break;
     case 'a':
     case 'A':
-      target_pose_.pose.position.y += 0.01;
+      desired_gripper_pose_.pose.position.y += 0.01;
       break;
     case 'd':
     case 'D':
-      target_pose_.pose.position.y -= 0.01;
+      desired_gripper_pose_.pose.position.y -= 0.01;
       break;
     case 'r':
     case 'R':
-      target_pose_.pose.position.z += 0.01;
+      desired_gripper_pose_.pose.position.z += 0.01;
       break;
     case 'f':
     case 'F':
-      target_pose_.pose.position.z -= 0.01;
+      desired_gripper_pose_.pose.position.z -= 0.01;
       break;
   }
 }
@@ -174,31 +183,31 @@ void KeyboardTeleoperationWrapper::processInputInOrientationControl()
   {
     case 'w':
     case 'W':
-      target_pose_rpy_.pitch -= M_PI / 180.0;
+      desired_gripper_pose_rpy_.pitch -= M_PI / 180.0;
       break;
     case 's':
     case 'S':
-      target_pose_rpy_.pitch += M_PI / 180.0;
+      desired_gripper_pose_rpy_.pitch += M_PI / 180.0;
       break;
     case 'a':
     case 'A':
-      target_pose_rpy_.roll += M_PI / 180.0;
+      desired_gripper_pose_rpy_.roll += M_PI / 180.0;
       break;
     case 'd':
     case 'D':
-      target_pose_rpy_.roll -= M_PI / 180.0;
+      desired_gripper_pose_rpy_.roll -= M_PI / 180.0;
       break;
     case 'r':
     case 'R':
-      target_pose_rpy_.yaw += M_PI / 180.0;
+      desired_gripper_pose_rpy_.yaw += M_PI / 180.0;
       break;
     case 'f':
     case 'F':
-      target_pose_rpy_.yaw -= M_PI / 180.0;
+      desired_gripper_pose_rpy_.yaw -= M_PI / 180.0;
       break;
   }
 
-  target_pose_.pose.orientation = convertRPYToQuaternionMsg(target_pose_rpy_);
+  desired_gripper_pose_.pose.orientation = convertRPYToQuaternionMsg(desired_gripper_pose_rpy_);
 }
 
 RPY KeyboardTeleoperationWrapper::convertQuaternionMsgToRPY(const geometry_msgs::Quaternion& quaternion)
