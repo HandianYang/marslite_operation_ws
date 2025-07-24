@@ -2,7 +2,7 @@
 #define MARSLITE_CONTROL_CARTESIAN_CONTROL_JOYSTICK_TELEOPERATION_H
 
 #include <ros/ros.h>
-#include <geometry_msgs/Vector3.h>
+#include <geometry_msgs/Point.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <sensor_msgs/Joy.h>
 #include <std_msgs/Bool.h>
@@ -17,15 +17,9 @@ class JoystickTeleoperationWrapper {
 public:
   explicit JoystickTeleoperationWrapper(const ros::NodeHandle& nh = ros::NodeHandle());
 
-  inline void teleoperate() {
-    while (nh_.ok()) {
-      this->teleoperateOnce();
-      rate_.sleep();
-      ros::spinOnce();
-    }
-  }
-  void teleoperateOnce();
-  void calculateTargetGripperPose();
+  void teleoperate();
+  void calculateDesiredGripperDisplacement();
+  void calculateDesiredGripperPose();
 
 private:
   const double kTriggerThreshold = 0.95;
@@ -34,6 +28,7 @@ private:
   ros::NodeHandle nh_;
   ros::Rate rate_;
   ros::Publisher desired_gripper_pose_publisher_;
+  ros::Publisher desired_gripper_displacement_publisher_;
   ros::Publisher desired_gripper_status_publisher_;
   ros::Subscriber left_joy_pose_subscriber_;
   ros::Subscriber left_joy_subscriber_;
@@ -41,16 +36,17 @@ private:
 
   // ROS messages
   geometry_msgs::TransformStamped base_link_to_tm_gripper_transform_;
-  geometry_msgs::PoseStamped initial_left_joy_pose_;
+  geometry_msgs::PoseStamped previous_left_joy_pose_;
   geometry_msgs::PoseStamped current_left_joy_pose_;
-  geometry_msgs::PoseStamped initial_gripper_pose_;
+  geometry_msgs::PoseStamped current_gripper_pose_;
+  geometry_msgs::PoseStamped desired_gripper_displacement_;
   geometry_msgs::PoseStamped desired_gripper_pose_;
   std_msgs::Bool desired_gripper_status_;
 
   // flags
-  bool is_begin_teleoperation_;
   bool is_position_change_enabled_;
   bool is_orientation_change_enabled_;
+  bool use_shared_controller_;  // false if using pure teleoperation
 
   // parameters
   double position_scale_;
@@ -61,18 +57,27 @@ private:
   void parseParameters();
   void initializePublishers();
   void initializeSubscribers();
-  void setInitialGripperPose();
 
-  // utility operations (supports teleoperateOnce())
-  void stopGripperPositionalMovement();
-  void stopGripperOrientationalMovement();
-  void publishDesiredGripperPose(const geometry_msgs::PoseStamped& desired_gripper_pose);
+  inline void publishDesiredGripperDIsplacement() {
+    desired_gripper_displacement_publisher_.publish(desired_gripper_displacement_);
+  }
 
-  // utility operations (supports calculateTargetGripperPose())
-  geometry_msgs::Vector3 getPositionDifference();
-  RPY getOrientationDifference();
-  RPY getRPYFromPose(const geometry_msgs::PoseStamped& pose);
-  double restrictAngleWithinPI(const double& angle);
+  inline void publishDesiredGripperPose() {
+    desired_gripper_pose_publisher_.publish(desired_gripper_pose_);
+  }
+
+  // utility operations (supports calculateDesiredGripperDisplacement())
+  geometry_msgs::Point getPositionDifference() const;
+  geometry_msgs::Point scalePositionDifference(const geometry_msgs::Point& position_difference) const;
+  RPY getRPYDifference() const;
+  RPY getRPYFromPose(const geometry_msgs::PoseStamped& pose) const;
+  double restrictAngleWithinPI(const double& angle) const;
+  RPY scaleAndTransformRPYDifference(const RPY& rpy_difference) const;
+  geometry_msgs::Quaternion convertRPYToQuaternion(const RPY& rpy) const;
+
+  //
+  geometry_msgs::Point applyPositionDisplacement() const;
+  geometry_msgs::Quaternion applyOrientationDisplacement() const;
 
   // callbacks
   void leftJoyPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);

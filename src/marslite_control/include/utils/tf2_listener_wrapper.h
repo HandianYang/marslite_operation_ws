@@ -11,8 +11,7 @@ public:
     
   inline geometry_msgs::TransformStamped lookupTransform(
       const std::string& target_frame,
-      const std::string& source_frame)
-  {
+      const std::string& source_frame) {
     geometry_msgs::TransformStamped transform_stamped;
     try {
       transform_stamped = tf_buffer_.lookupTransform(
@@ -23,6 +22,22 @@ public:
     }
     return transform_stamped;
   }
+
+  inline geometry_msgs::PoseStamped lookupTransformInPoseStamped(
+      const std::string& target_frame,
+      const std::string& source_frame)
+  {
+    geometry_msgs::TransformStamped transform_stamped
+        = this->lookupTransform(target_frame, source_frame);
+    
+    geometry_msgs::PoseStamped pose_stamped;
+    pose_stamped.header = transform_stamped.header;
+    pose_stamped.pose.position.x = transform_stamped.transform.translation.x;
+    pose_stamped.pose.position.y = transform_stamped.transform.translation.y;
+    pose_stamped.pose.position.z = transform_stamped.transform.translation.z;
+    pose_stamped.pose.orientation = transform_stamped.transform.rotation;
+    return pose_stamped;
+  } 
     
 private:
   tf2_ros::Buffer tf_buffer_;
