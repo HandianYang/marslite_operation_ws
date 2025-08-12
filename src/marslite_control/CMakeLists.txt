@@ -57,12 +57,6 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
-add_library(cartesian_control_lib
-  src/cartesian_control/keyboard_teleoperation.cpp
-  src/cartesian_control/joystick_teleoperation.cpp
-)
-target_link_libraries(cartesian_control_lib ${catkin_LIBRARIES})
-
 ################################################################################
 # Install
 ################################################################################
@@ -71,27 +65,26 @@ target_link_libraries(cartesian_control_lib ${catkin_LIBRARIES})
 # Test
 ################################################################################
 
-add_executable(test_joystick_teleoperation
-  test/test_joystick_teleoperation.cpp
+add_executable(motion_controller_teleoperation_node
+  example/motion_controller_teleoperation_node.cpp
+  src/cartesian_control/motion_controller_teleoperation.cpp
 )
-target_link_libraries(test_joystick_teleoperation
+target_link_libraries(motion_controller_teleoperation_node
   ${catkin_LIBRARIES}
-  cartesian_control_lib
 )
 
-add_executable(test_keyboard_teleoperation
-  test/test_keyboard_teleoperation.cpp
+add_executable(keyboard_teleoperation_node
+  example/keyboard_teleoperation_node.cpp
+  src/cartesian_control/keyboard_teleoperation.cpp
 )
-target_link_libraries(test_keyboard_teleoperation
+target_link_libraries(keyboard_teleoperation_node
   ${catkin_LIBRARIES}
-  cartesian_control_lib
 )
 
-add_executable(test_shared_control
-  test/test_shared_control.cpp
-  src/shared_control/shared_controller.cpp
+add_executable(shared_control_node
+  example/shared_control_node.cpp
+  src/shared_control/shared_control.cpp
 )
-target_link_libraries(test_shared_control
+target_link_libraries(shared_control_node
   ${catkin_LIBRARIES}
-  cartesian_control_lib
 )

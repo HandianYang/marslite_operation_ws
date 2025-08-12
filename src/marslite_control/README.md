@@ -4,30 +4,30 @@
 
 **[NOTE] Remember to launch controllers in `cartesian_controller_ws` first!**
 
-### `test_joystick_teleoperation`
+### `motion_controller_teleoperation`
 
 This test implements the Cartesian teleoperation of the robotic arm, driven by the pose of the VR grips. The grip's pose is passed and recognized as a ROS topic called `/unity/joy_pose/left` in `PoseStamped` type. 
 
 ```Shell
-roslaunch marslite_control test_joystick_teleoperation.launch
+roslaunch marslite_control motion_controller_teleoperation.launch
 ```
 
-### `test_keyboard_teleoperation`
+### `keyboard_teleoperation`
 
 This test implements the Cartesian teleoperation of the robotic arm, driven by keyboard signals. 
 
 ```Shell
-roslaunch marslite_control test_keyboard_teleoperation.launch
+roslaunch marslite_control keyboard_teleoperation.launch
 ```
 
-### `test_joystick_shared_control`
+### `motion_controller_shared_control`
 
 ```Shell
-roslaunch marslite_control test_joystick_shared_control.launch
+roslaunch marslite_control motion_controller_shared_control.launch
 ```
 
-### `test_keyboard_shared_control`
+### `keyboard_shared_control`
 
 ```Shell
-roslaunch marslite_control test_keyboard_shared_control.launch
+roslaunch marslite_control keyboard_shared_control.launch
 ```

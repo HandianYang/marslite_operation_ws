@@ -2,16 +2,15 @@
 <launch>
   <env name="ROSCONSOLE_FORMAT" value="[${severity}] [${node}] ${message}"/>
 
-  <include file="$(find file_server)/launch/ros_sharp_communication.launch">
-  </include>
+  <include file="$(find file_server)/launch/ros_sharp_communication.launch"/>
 
-  <arg name="debug_msg_enabled" default="false"/>
   <arg name="position_scale" default="0.8"/>
   <arg name="orientation_scale" default="0.8"/>
-  <node name="test_joystick_teleoperation" pkg="marslite_control"
-        type="test_joystick_teleoperation" output="screen">
-    <param name="debug_msg_enabled" value="$(arg debug_msg_enabled)"/>
+  <arg name="use_shared_controller" default="false"/>
+  <node name="motion_controller_teleoperation_node" pkg="marslite_control"
+        type="motion_controller_teleoperation_node" output="screen">
     <param name="position_scale" value="$(arg position_scale)"/>
     <param name="orientation_scale" value="$(arg orientation_scale)"/>
+    <param name="use_shared_controller" value="$(arg use_shared_controller)"/>
   </node>
 </launch>

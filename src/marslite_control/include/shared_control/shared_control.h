@@ -1,13 +1,13 @@
-#ifndef MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROLLER_H
-#define MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROLLER_H
+#ifndef MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROL_H
+#define MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROL_H
 
 #include <ros/ros.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <std_msgs/Bool.h>
 
-class SharedController {
+class SharedControl {
 public:
-  explicit SharedController(const ros::NodeHandle& nh = ros::NodeHandle());
+  explicit SharedControl(const ros::NodeHandle& nh = ros::NodeHandle());
 
 private:
   ros::NodeHandle nh_;
@@ -19,7 +19,6 @@ private:
   geometry_msgs::PoseStamped user_desired_gripper_pose_;
   std_msgs::Bool user_desired_gripper_status_;
 
-  bool use_shared_controller_;  // false if using pure teleoperation
 
 private:
   void initializePublishers();
@@ -28,8 +27,6 @@ private:
 
   inline void userDesiredGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
     user_desired_gripper_pose_ = *msg;
-    if (!use_shared_controller_)
-      desired_gripper_pose_publisher_.publish(user_desired_gripper_pose_);
   }
 
   inline void userDesiredGripperStatusCallback(const std_msgs::Bool::ConstPtr& msg) {
@@ -40,4 +37,4 @@ private:
   }
 };
 
-#endif // #ifndef MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROLLER_H
+#endif // #ifndef MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROL_H

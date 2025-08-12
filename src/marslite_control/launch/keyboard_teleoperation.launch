@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <env name="ROSCONSOLE_FORMAT" value="[${severity}] [${node}] ${message}"/>
+
+  <node name="keyboard_teleoperation_node" pkg="marslite_control"
+        type="keyboard_teleoperation_node" output="screen">
+    <param name="use_shared_controller" value="false"/>
+  </node>
+</launch>

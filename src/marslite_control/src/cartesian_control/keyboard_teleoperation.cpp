@@ -14,9 +14,10 @@
  *                  Constructors                      *  
  ****************************************************** */
 
-KeyboardTeleoperationWrapper::KeyboardTeleoperationWrapper(const ros::NodeHandle& nh)
+KeyboardTeleoperation::KeyboardTeleoperation(const ros::NodeHandle& nh)
     : nh_(nh), input_key_('\0'), rate_(ros::Rate(25)),
       is_stopped_(false), is_position_control_(true) {
+  this->parseParameters();
   this->initializePublishers();
   this->setInitialGripperPose();
 
@@ -27,7 +28,7 @@ KeyboardTeleoperationWrapper::KeyboardTeleoperationWrapper(const ros::NodeHandle
  *                  Public members                    *  
  ****************************************************** */
 
-void KeyboardTeleoperationWrapper::teleoperate() {
+void KeyboardTeleoperation::teleoperate() {
   while (nh_.ok() && !is_stopped_) {
     this->getKeyboardInput();
     if (input_key_ != '\0') {
@@ -44,18 +45,29 @@ void KeyboardTeleoperationWrapper::teleoperate() {
  *                  Private members                   *  
  ****************************************************** */
 
-void KeyboardTeleoperationWrapper::initializePublishers() {
-  desired_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
-      "/cartesian_control/user_desired_gripper_pose", 10);
-  desired_gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(
-      "/cartesian_control/user_desired_gripper_status", 10);
+void KeyboardTeleoperation::parseParameters() {
+  ros::NodeHandle pnh("~");
+  pnh.param("use_shared_controller", use_shared_controller_, false);
+  ROS_INFO_STREAM("Parameters: "
+      << "\n * use_shared_controller: " << use_shared_controller_);
 }
 
-void KeyboardTeleoperationWrapper::setInitialGripperPose() {
+void KeyboardTeleoperation::initializePublishers() {
+  const std::string gripper_pose_topic = use_shared_controller_ ?
+      "/cartesian_control/user_desired_gripper_pose" :
+      "/cartesian_control/target_frame";
+  const std::string gripper_status_topic = use_shared_controller_ ?
+      "/cartesian_control/user_desired_gripper_status" :
+      "/gripper/cmd_gripper";
+  desired_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(gripper_pose_topic, 1);
+  desired_gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(gripper_status_topic, 1);
+}
+
+void KeyboardTeleoperation::setInitialGripperPose() {
   desired_gripper_pose_ = kInitialGripperPose;
 }
 
-void KeyboardTeleoperationWrapper::getKeyboardInput() {
+void KeyboardTeleoperation::getKeyboardInput() {
   struct termios oldt, newt;
   input_key_ = '\0';
 
@@ -93,7 +105,7 @@ void KeyboardTeleoperationWrapper::getKeyboardInput() {
   tcsetattr(fd, TCSANOW, &oldt);
 }
 
-void KeyboardTeleoperationWrapper::processInput() {
+void KeyboardTeleoperation::processInput() {
   static ros::Time last_switch_time = ros::Time(0);
   switch (input_key_) {
     // Q/q: Stop the program
@@ -138,40 +150,40 @@ void KeyboardTeleoperationWrapper::processInput() {
   }
 }
 
-void KeyboardTeleoperationWrapper::publishPose() {
+void KeyboardTeleoperation::publishPose() {
   desired_gripper_pose_publisher_.publish(desired_gripper_pose_);
 }
 
-void KeyboardTeleoperationWrapper::processInputInPositionControl() {
+void KeyboardTeleoperation::processInputInPositionControl() {
   switch (input_key_) {
     case 'w':
     case 'W':
-      desired_gripper_pose_.pose.position.x += 0.01;
+      desired_gripper_pose_.pose.position.x += 0.001;
       break;
     case 's':
     case 'S':
-      desired_gripper_pose_.pose.position.x -= 0.01;
+      desired_gripper_pose_.pose.position.x -= 0.001;
       break;
     case 'a':
     case 'A':
-      desired_gripper_pose_.pose.position.y += 0.01;
+      desired_gripper_pose_.pose.position.y += 0.001;
       break;
     case 'd':
     case 'D':
-      desired_gripper_pose_.pose.position.y -= 0.01;
+      desired_gripper_pose_.pose.position.y -= 0.001;
       break;
     case 'r':
     case 'R':
-      desired_gripper_pose_.pose.position.z += 0.01;
+      desired_gripper_pose_.pose.position.z += 0.001;
       break;
     case 'f':
     case 'F':
-      desired_gripper_pose_.pose.position.z -= 0.01;
+      desired_gripper_pose_.pose.position.z -= 0.001;
       break;
   }
 }
 
-void KeyboardTeleoperationWrapper::processInputInOrientationControl()
+void KeyboardTeleoperation::processInputInOrientationControl()
 {
   // [NOTE] The transformation from `/base_link` to `/tm_gripper` is applied here`:
   //   | /base_link | /tm_gripper |
@@ -210,7 +222,7 @@ void KeyboardTeleoperationWrapper::processInputInOrientationControl()
   desired_gripper_pose_.pose.orientation = convertRPYToQuaternionMsg(desired_gripper_pose_rpy_);
 }
 
-RPY KeyboardTeleoperationWrapper::convertQuaternionMsgToRPY(const geometry_msgs::Quaternion& quaternion)
+RPY KeyboardTeleoperation::convertQuaternionMsgToRPY(const geometry_msgs::Quaternion& quaternion)
 {
   RPY rpy;
   tf2::Quaternion q(
@@ -232,7 +244,7 @@ RPY KeyboardTeleoperationWrapper::convertQuaternionMsgToRPY(const geometry_msgs:
   return rpy;
 }
 
-geometry_msgs::Quaternion KeyboardTeleoperationWrapper::convertRPYToQuaternionMsg(const RPY& rpy)
+geometry_msgs::Quaternion KeyboardTeleoperation::convertRPYToQuaternionMsg(const RPY& rpy)
 {
   tf2::Quaternion q;
   q.setRPY(rpy.roll, rpy.pitch, rpy.yaw);

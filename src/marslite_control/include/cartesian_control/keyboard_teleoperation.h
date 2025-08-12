@@ -9,9 +9,9 @@
 #include "cartesian_control/kinematics_constants.h"
 #include "utils/rpy.h"
 
-class KeyboardTeleoperationWrapper {
+class KeyboardTeleoperation {
 public:
-  explicit KeyboardTeleoperationWrapper(const ros::NodeHandle& nh = ros::NodeHandle());
+  explicit KeyboardTeleoperation(const ros::NodeHandle& nh = ros::NodeHandle());
   void teleoperate();
 
 private:
@@ -30,9 +30,11 @@ private:
   // flags
   bool is_stopped_;
   bool is_position_control_;
+  bool use_shared_controller_;  // false if using pure teleoperation
 
 private:
   // initialization
+  void parseParameters();
   void initializePublishers();
   void setInitialGripperPose();
 
