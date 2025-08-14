@@ -32,10 +32,6 @@ void MotionControllerTeleoperation::teleoperate() {
       initial_gripper_pose_ = desired_gripper_pose_;
       is_begin_teleoperation_ = true;
     }
-    // The desired gripper pose will be published to different topics according
-    // to the `use_shared_controller_` parameter.
-    // - use_shared_controller_ = true: published to shared controller
-    // - use_shared_controller_ = false: published to the robot
     this->publishDesiredGripperPose();
 
     rate_.sleep();
@@ -123,14 +119,20 @@ void MotionControllerTeleoperation::parseParameters() {
 }
 
 void MotionControllerTeleoperation::initializePublishers() {
+  // The desired gripper pose will be published to different topics according
+  // to the `use_shared_controller_` parameter.
+  // - use_shared_controller_ = true: published to shared controller
+  // - use_shared_controller_ = false: published to the robot
   const std::string gripper_pose_topic = use_shared_controller_ ?
-      "/cartesian_control/user_desired_gripper_pose" :
+      "/marslite_control/user_desired_gripper_pose" :
       "/cartesian_control/target_frame";
   const std::string gripper_status_topic = use_shared_controller_ ?
-      "/cartesian_control/user_desired_gripper_status" :
+      "/marslite_control/user_desired_gripper_status" :
       "/gripper/cmd_gripper";
   desired_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(gripper_pose_topic, 1);
   desired_gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(gripper_status_topic, 1);
+  record_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
+      "/marslite_control/record_signal", 1);
 }
 
 void MotionControllerTeleoperation::initializeSubscribers() {
@@ -208,10 +210,10 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
   // axes[0] and axes[1] are for mobile platform teleoperation
   switch (msg->axes.size()) {
     case 4:
-      // [3] primary hand trigger
+      // [3] primary hand trigger: Enable/disable orientational change
       is_orientation_change_enabled_ = (msg->axes[3] > kTriggerThreshold);
     case 3:
-      // [2] primary index trigger
+      // [2] primary index trigger: Enable/disable positional change
       is_position_change_enabled_ = (msg->axes[2] > kTriggerThreshold);
       break;
     default:
@@ -222,8 +224,11 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
 
   switch (msg->buttons.size()) {
     case 2:
-      // [1] Y button 
-      // TODO: Add features
+      // [1] Y button: Send `record_signal` to `shared_control`
+      if (msg->buttons[1] == 1) {
+        record_signal_.data = true;
+        record_signal_publisher_.publish(record_signal_);
+      }
     case 1:
       // [0] X button: Close/Open the gripper
       if (msg->buttons[0] == 1) {

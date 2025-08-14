@@ -4,6 +4,7 @@ int main(int argc, char** argv)
 {
   ros::init(argc, argv, "shared_control_node");  
   SharedControl shared_control;
+  shared_control.run();
 
   ros::spin();
   return 0;

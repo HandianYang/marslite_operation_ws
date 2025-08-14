@@ -10,6 +10,6 @@
     <arg name="use_shared_controller" value="true"/>
   </include>
 
-  <!-- <node name="test_shared_control" pkg="marslite_control" type="test_shared_control" output="screen">
-  </node> -->
+  <node name="shared_control_node" pkg="marslite_control" type="shared_control_node" output="screen">
+  </node>
 </launch>

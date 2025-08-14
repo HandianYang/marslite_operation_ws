@@ -84,6 +84,7 @@ target_link_libraries(keyboard_teleoperation_node
 add_executable(shared_control_node
   example/shared_control_node.cpp
   src/shared_control/shared_control.cpp
+  src/shared_control/intent_inference.cpp
 )
 target_link_libraries(shared_control_node
   ${catkin_LIBRARIES}

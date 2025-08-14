@@ -28,6 +28,7 @@ private:
   ros::Rate rate_;
   ros::Publisher desired_gripper_pose_publisher_;
   ros::Publisher desired_gripper_status_publisher_;
+  ros::Publisher record_signal_publisher_;
   ros::Subscriber left_controller_pose_subscriber_;
   ros::Subscriber left_controller_joy_subscriber_;
   Tf2ListenerWrapper tf2_listener_;
@@ -39,6 +40,7 @@ private:
   geometry_msgs::PoseStamped initial_gripper_pose_;
   geometry_msgs::PoseStamped desired_gripper_pose_;
   std_msgs::Bool desired_gripper_status_;
+  std_msgs::Bool record_signal_;
 
   // flags
   bool is_begin_teleoperation_;  // true if teleoperation has not started yet
@@ -58,6 +60,7 @@ private:
   void setInitialGripperPose();
 
   // utility operations (supports teleoperateOnce())
+  
   inline void lookupCurrentGripperTransform() {
     current_gripper_transform_ = tf2_listener_.lookupTransform("base_link", "tm_gripper");
   }
