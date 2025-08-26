@@ -4,6 +4,7 @@
 #include <ros/ros.h>
 #include <geometry_msgs/Vector3.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Twist.h>
 #include <sensor_msgs/Joy.h>
 #include <std_msgs/Bool.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -29,6 +30,7 @@ private:
   ros::Publisher desired_gripper_pose_publisher_;
   ros::Publisher desired_gripper_status_publisher_;
   ros::Publisher record_signal_publisher_;
+  ros::Publisher mobile_platform_velocity_publisher_;
   ros::Subscriber left_controller_pose_subscriber_;
   ros::Subscriber left_controller_joy_subscriber_;
   Tf2ListenerWrapper tf2_listener_;
@@ -39,8 +41,10 @@ private:
   geometry_msgs::PoseStamped current_left_controller_pose_;
   geometry_msgs::PoseStamped initial_gripper_pose_;
   geometry_msgs::PoseStamped desired_gripper_pose_;
+  geometry_msgs::Twist mobile_platform_velocity_;
   std_msgs::Bool desired_gripper_status_;
   std_msgs::Bool record_signal_;
+
 
   // flags
   bool is_begin_teleoperation_;  // true if teleoperation has not started yet
@@ -77,6 +81,10 @@ private:
 
   inline void publishDesiredGripperPose() {
     desired_gripper_pose_publisher_.publish(desired_gripper_pose_);
+  }
+
+  inline void publishMobilePlatformVelocity() {
+    mobile_platform_velocity_publisher_.publish(mobile_platform_velocity_);
   }
 
   // utility operations (supports calculateDesiredGripperPose())

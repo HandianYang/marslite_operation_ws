@@ -33,6 +33,7 @@ void MotionControllerTeleoperation::teleoperate() {
       is_begin_teleoperation_ = true;
     }
     this->publishDesiredGripperPose();
+    this->publishMobilePlatformVelocity();
 
     rate_.sleep();
     ros::spinOnce();
@@ -133,6 +134,8 @@ void MotionControllerTeleoperation::initializePublishers() {
   desired_gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(gripper_status_topic, 1);
   record_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
       "/marslite_control/record_signal", 1);
+  mobile_platform_velocity_publisher_ = nh_.advertise<geometry_msgs::Twist>(
+      "/mob_plat/cmd_vel", 1);
 }
 
 void MotionControllerTeleoperation::initializeSubscribers() {
@@ -207,7 +210,6 @@ void MotionControllerTeleoperation::leftControllerPoseCallback(const geometry_ms
 }
 
 void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs::Joy::ConstPtr& msg) {
-  // axes[0] and axes[1] are for mobile platform teleoperation
   switch (msg->axes.size()) {
     case 4:
       // [3] primary hand trigger: Enable/disable orientational change
@@ -215,6 +217,12 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
     case 3:
       // [2] primary index trigger: Enable/disable positional change
       is_position_change_enabled_ = (msg->axes[2] > kTriggerThreshold);
+    case 2:
+      // [1] horizontal axis: Turn left/right
+      mobile_platform_velocity_.angular.z = msg->axes[1] * 0.2;
+    case 1:
+      // [0] vertical axis: Move forward/backward
+      mobile_platform_velocity_.linear.x = msg->axes[0] * 0.3;
       break;
     default:
       ROS_WARN_ONCE("Mismatch number of left joystick axes (%lu).", msg->axes.size());
