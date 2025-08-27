@@ -112,11 +112,16 @@ void MotionControllerTeleoperation::parseParameters() {
   ros::NodeHandle pnh("~");
   pnh.param("position_scale", position_scale_, 0.8);
   pnh.param("orientation_scale", orientation_scale_, 0.8);
+  pnh.param("linear_velocity_scale", linear_velocity_scale_, 0.15);
+  pnh.param("angular_velocity_scale", angular_velocity_scale_, 0.15);
   pnh.param("use_shared_controller", use_shared_controller_, false);
   ROS_INFO_STREAM("Parameters: " 
       << "\n * position_scale: " << position_scale_
       << "\n * orientation_scale: " << orientation_scale_
-      << "\n * use_shared_controller: " << use_shared_controller_);
+      << "\n * linear_velocity_scale: " << linear_velocity_scale_
+      << "\n * angular_velocity_scale: " << angular_velocity_scale_
+      << "\n * use_shared_controller: " << use_shared_controller_
+  );
 }
 
 void MotionControllerTeleoperation::initializePublishers() {
@@ -219,10 +224,12 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
       is_position_change_enabled_ = (msg->axes[2] > kTriggerThreshold);
     case 2:
       // [1] horizontal axis: Turn left/right
-      mobile_platform_velocity_.angular.z = msg->axes[1] * 0.2;
+      mobile_platform_velocity_.angular.z = std::abs(msg->axes[1]) > 0.8 ?
+          msg->axes[1] * angular_velocity_scale_ : 0.0;
     case 1:
       // [0] vertical axis: Move forward/backward
-      mobile_platform_velocity_.linear.x = msg->axes[0] * 0.3;
+      mobile_platform_velocity_.linear.x = std::abs(msg->axes[0]) > 0.8 ?
+          msg->axes[0] * linear_velocity_scale_ : 0.0;
       break;
     default:
       ROS_WARN_ONCE("Mismatch number of left joystick axes (%lu).", msg->axes.size());

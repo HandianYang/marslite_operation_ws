@@ -45,7 +45,6 @@ private:
   std_msgs::Bool desired_gripper_status_;
   std_msgs::Bool record_signal_;
 
-
   // flags
   bool is_begin_teleoperation_;  // true if teleoperation has not started yet
   bool is_position_change_enabled_;
@@ -54,6 +53,8 @@ private:
   // parameters
   double position_scale_;
   double orientation_scale_;
+  double linear_velocity_scale_;
+  double angular_velocity_scale_;
   bool use_shared_controller_;  // false if using pure teleoperation
 
 private:
