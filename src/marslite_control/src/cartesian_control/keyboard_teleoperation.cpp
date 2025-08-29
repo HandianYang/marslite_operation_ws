@@ -64,7 +64,7 @@ void KeyboardTeleoperation::initializePublishers() {
 }
 
 void KeyboardTeleoperation::setInitialGripperPose() {
-  desired_gripper_pose_ = kInitialGripperPose;
+  desired_gripper_pose_ = kFrontInitialGripperPose;
 }
 
 void KeyboardTeleoperation::getKeyboardInput() {
@@ -131,7 +131,7 @@ void KeyboardTeleoperation::processInput() {
       break;
     // space: Reset the gripper pose to the initial pose
     case ' ':
-      desired_gripper_pose_ = kInitialGripperPose;
+      desired_gripper_pose_ = kFrontInitialGripperPose;
       desired_gripper_pose_rpy_ = this->convertQuaternionMsgToRPY(desired_gripper_pose_.pose.orientation);
       ROS_INFO_STREAM("Reset to the initial gripper pose.");
       break;

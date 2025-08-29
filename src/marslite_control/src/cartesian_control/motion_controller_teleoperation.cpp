@@ -10,7 +10,6 @@ MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHand
   this->parseParameters();
   this->initializePublishers();
   this->initializeSubscribers();
-  this->setInitialGripperPose();
 }
 
 /******************************************************
@@ -37,66 +36,6 @@ void MotionControllerTeleoperation::teleoperate() {
 
     rate_.sleep();
     ros::spinOnce();
-  }
-}
-
-void MotionControllerTeleoperation::calculateDesiredGripperPose() {
-  if (is_position_change_enabled_) {
-    geometry_msgs::Vector3 position_difference = this->getPositionDifference();
-    geometry_msgs::Vector3 scaled_position_difference;
-    scaled_position_difference.x = position_difference.x * position_scale_;
-    scaled_position_difference.y = position_difference.y * position_scale_;
-    scaled_position_difference.z = position_difference.z * position_scale_;
-
-    desired_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x + scaled_position_difference.x;
-    desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.y;
-    desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
-  }
-  else {
-    this->resetPositionalMovement();
-  }
-
-  if (is_orientation_change_enabled_) {
-    RPY orientation_difference = this->getOrientationDifference();
-
-    // [NOTE] The transformation from `/base_link` to `/tm_gripper` is applied here`:
-    //   | /base_link | /tm_gripper |
-    //   |------------|-------------|
-    //   |   +-roll   |   -+pitch   |
-    //   |   +-pitch  |   +-roll    |
-    //   |   +-yaw    |   +-yaw     |
-    //
-    RPY scaled_orientation_difference;
-    scaled_orientation_difference.roll = orientation_difference.pitch * orientation_scale_;
-    scaled_orientation_difference.pitch = 0;
-    // [NOTE] The pitch of the transformed RPY is disabled because we don't need roll rotation
-    //   for the gripper (w.r.t. `base_link`)`. Uncomment the line below if you want
-    //   to enable it.
-    //  
-    // scaled_orientation_difference.pitch = -orientation_difference.roll * orientation_scale_;
-    scaled_orientation_difference.yaw = orientation_difference.yaw * orientation_scale_;
-
-    RPY initial_gripper_rpy = getRPYFromPose(initial_gripper_pose_);
-    RPY target_gripper_rpy = {
-        this->restrictAngleWithinPI(initial_gripper_rpy.roll + scaled_orientation_difference.roll),
-        this->restrictAngleWithinPI(initial_gripper_rpy.pitch + scaled_orientation_difference.pitch),
-        this->restrictAngleWithinPI(initial_gripper_rpy.yaw + scaled_orientation_difference.yaw)
-    };
-
-    tf2::Quaternion target_gripper_quaternion;
-    target_gripper_quaternion.setRPY(
-        target_gripper_rpy.roll,
-        target_gripper_rpy.pitch,
-        target_gripper_rpy.yaw
-    );
-    target_gripper_quaternion.normalize();
-    desired_gripper_pose_.pose.orientation.x = target_gripper_quaternion.x();
-    desired_gripper_pose_.pose.orientation.y = target_gripper_quaternion.y();
-    desired_gripper_pose_.pose.orientation.z = target_gripper_quaternion.z();
-    desired_gripper_pose_.pose.orientation.w = target_gripper_quaternion.w();
-  }
-  else {
-    this->resetOrientationalMovement();
   }
 }
 
@@ -150,13 +89,33 @@ void MotionControllerTeleoperation::initializeSubscribers() {
       &MotionControllerTeleoperation::leftControllerJoyCallback, this);
 }
 
-void MotionControllerTeleoperation::setInitialGripperPose() {
-  initial_gripper_pose_ = desired_gripper_pose_ = kInitialGripperPose;
+//
+// utility operations (supports teleoperate())
+//
+
+void MotionControllerTeleoperation::calculateDesiredGripperPose() {
+  if (is_position_change_enabled_) {
+    this->calculateDesiredGripperPosition();
+  } else {
+    this->resetPositionalMovement();
+  }
+
+  if (is_orientation_change_enabled_) {
+    this->calculateDesiredGripperOrientation();
+  } else {
+    this->resetOrientationalMovement();
+  }
 }
 
 //
 // utility operations (supports calculateDesiredGripperPose())
 //
+
+void MotionControllerTeleoperation::calculateDesiredGripperPosition() {
+  geometry_msgs::Vector3 position_difference = this->getPositionDifference();
+  geometry_msgs::Vector3 scaled_position_difference = this->scalePositionDifference(position_difference);
+  this->applyPositionDifference(scaled_position_difference);
+}
 
 geometry_msgs::Vector3 MotionControllerTeleoperation::getPositionDifference() {
   geometry_msgs::Vector3 position_difference;
@@ -164,6 +123,47 @@ geometry_msgs::Vector3 MotionControllerTeleoperation::getPositionDifference() {
   position_difference.y = current_left_controller_pose_.pose.position.y - initial_left_controller_pose_.pose.position.y;
   position_difference.z = current_left_controller_pose_.pose.position.z - initial_left_controller_pose_.pose.position.z;
   return position_difference;
+}
+
+geometry_msgs::Vector3 MotionControllerTeleoperation::scalePositionDifference(
+    const geometry_msgs::Vector3& position_difference) {
+  geometry_msgs::Vector3 scaled_position_difference;
+  scaled_position_difference.x = position_difference.x * position_scale_;
+  scaled_position_difference.y = position_difference.y * position_scale_;
+  scaled_position_difference.z = position_difference.z * position_scale_;
+  return scaled_position_difference;
+}
+
+void MotionControllerTeleoperation::applyPositionDifference(
+    const geometry_msgs::Vector3& scaled_position_difference) {
+  switch (gripper_direction_) {
+    case GripperDirection::FRONT:
+      desired_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x + scaled_position_difference.x;
+      desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.y;
+      desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
+      break;
+    case GripperDirection::LEFT:
+      // controller: front/back -> gripper: left/right
+      // controller: left/right -> gripper: back/front
+      desired_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x - scaled_position_difference.y;
+      desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.x;
+      desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
+      break;
+    case GripperDirection::RIGHT:
+      // controller: front/back -> gripper: right/left
+      // controller: left/right -> gripper: front/back
+      desired_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x + scaled_position_difference.y;
+      desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y - scaled_position_difference.x;
+      desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
+      break;
+    default:  break;
+  }
+}
+
+void MotionControllerTeleoperation::calculateDesiredGripperOrientation() {
+  RPY orientation_difference = this->getOrientationDifference();
+  RPY scaled_orientation_difference = this->scaleOrientationDifference(orientation_difference);
+  this->applyOrientationDifference(scaled_orientation_difference);
 }
 
 RPY MotionControllerTeleoperation::getOrientationDifference() {
@@ -175,6 +175,51 @@ RPY MotionControllerTeleoperation::getOrientationDifference() {
       this->restrictAngleWithinPI(current_left_controller_rpy.yaw - initial_left_controller_rpy.yaw)
   };
   return orientation_difference;
+}
+
+RPY MotionControllerTeleoperation::scaleOrientationDifference(const RPY& orientation_difference) {
+  RPY scaled_orientation_difference;
+  scaled_orientation_difference.roll = orientation_difference.roll * orientation_scale_;
+  scaled_orientation_difference.pitch = orientation_difference.pitch * orientation_scale_;
+  scaled_orientation_difference.yaw = orientation_difference.yaw * orientation_scale_;
+  return scaled_orientation_difference;
+}
+
+void MotionControllerTeleoperation::applyOrientationDifference(const RPY& scaled_orientation_difference) {
+  // [NOTE] The transformation from left controller to `/tm_gripper` to
+  //   `/base_link` is applied in this function:
+  //   | controller | /base_link  |
+  //   |------------|-------------|
+  //   |   +-roll   |   +-pitch   |
+  //   |   +-pitch  |   -+roll    |
+  //   |   +-yaw    |   +-yaw     |
+  RPY transformed_orientation_difference;
+  transformed_orientation_difference.roll = scaled_orientation_difference.pitch;
+  transformed_orientation_difference.pitch = 0.0;
+  // [NOTE] The pitch of the transformed RPY is disabled because we don't need
+  //   roll rotation for the gripper (w.r.t. `base_link`)`
+  // 
+  //   Uncomment this line to enable pitch change:
+  // transformed_orientation_difference.pitch = -scaled_orientation_difference.roll;
+  transformed_orientation_difference.yaw = scaled_orientation_difference.yaw;
+
+  RPY initial_gripper_rpy = getRPYFromPose(initial_gripper_pose_);
+  RPY target_gripper_rpy = {
+    this->restrictAngleWithinPI(initial_gripper_rpy.roll + transformed_orientation_difference.roll),
+    this->restrictAngleWithinPI(initial_gripper_rpy.pitch + transformed_orientation_difference.pitch),
+    this->restrictAngleWithinPI(initial_gripper_rpy.yaw + transformed_orientation_difference.yaw)
+  };
+  tf2::Quaternion target_gripper_quaternion;
+  target_gripper_quaternion.setRPY(
+      target_gripper_rpy.roll,
+      target_gripper_rpy.pitch,
+      target_gripper_rpy.yaw
+  );
+  target_gripper_quaternion.normalize();
+  desired_gripper_pose_.pose.orientation.x = target_gripper_quaternion.x();
+  desired_gripper_pose_.pose.orientation.y = target_gripper_quaternion.y();
+  desired_gripper_pose_.pose.orientation.z = target_gripper_quaternion.z();
+  desired_gripper_pose_.pose.orientation.w = target_gripper_quaternion.w();
 }
 
 RPY MotionControllerTeleoperation::getRPYFromPose(const geometry_msgs::PoseStamped& pose) {

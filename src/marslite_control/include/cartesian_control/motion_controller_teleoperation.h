@@ -14,12 +14,26 @@
 #include "utils/rpy.h"
 #include "utils/tf2_listener_wrapper.h"
 
+enum GripperDirection {
+  FRONT=0,
+  LEFT=1,
+  RIGHT=2
+};
+
 class MotionControllerTeleoperation {
 public:
   explicit MotionControllerTeleoperation(const ros::NodeHandle& nh = ros::NodeHandle());
 
+  inline void initializeGripperPose(const geometry_msgs::PoseStamped& pose = kFrontInitialGripperPose) {
+    initial_gripper_pose_ = desired_gripper_pose_ = pose;
+    this->publishDesiredGripperPose();
+  }
+
+  inline void setGripperDirection(const GripperDirection& direction = GripperDirection::FRONT) {
+    gripper_direction_ = direction;
+  }
+
   void teleoperate();
-  void calculateDesiredGripperPose();
 
 private:
   const double kTriggerThreshold = 0.95;
@@ -49,6 +63,7 @@ private:
   bool is_begin_teleoperation_;  // true if teleoperation has not started yet
   bool is_position_change_enabled_;
   bool is_orientation_change_enabled_;
+  GripperDirection gripper_direction_;
 
   // parameters
   double position_scale_;
@@ -62,10 +77,10 @@ private:
   void parseParameters();
   void initializePublishers();
   void initializeSubscribers();
-  void setInitialGripperPose();
 
-  // utility operations (supports teleoperateOnce())
-  
+  // utility operations (supports teleoperate())
+  void calculateDesiredGripperPose();
+
   inline void lookupCurrentGripperTransform() {
     current_gripper_transform_ = tf2_listener_.lookupTransform("base_link", "tm_gripper");
   }
@@ -89,8 +104,16 @@ private:
   }
 
   // utility operations (supports calculateDesiredGripperPose())
+  void calculateDesiredGripperPosition();
   geometry_msgs::Vector3 getPositionDifference();
+  geometry_msgs::Vector3 scalePositionDifference(const geometry_msgs::Vector3& position_difference);
+  void applyPositionDifference(const geometry_msgs::Vector3& scaled_position_difference);
+
+  void calculateDesiredGripperOrientation();
   RPY getOrientationDifference();
+  RPY scaleOrientationDifference(const RPY& orientation_difference);
+  void applyOrientationDifference(const RPY& scaled_orientation_difference);
+
   RPY getRPYFromPose(const geometry_msgs::PoseStamped& pose);
   double restrictAngleWithinPI(const double& angle);
 
