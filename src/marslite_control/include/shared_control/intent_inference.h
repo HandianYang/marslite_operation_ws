@@ -4,10 +4,12 @@
 #include <ros/ros.h>
 #include <geometry_msgs/Point.h>
 #include <visualization_msgs/MarkerArray.h>
+#include <map>
+
 #include "detection_msgs/DetectedObject.h"
 #include "detection_msgs/DetectedObjectArray.h"
+#include "utils/tf2_listener_wrapper.h"
 
-#include <map>
 
 namespace detection_msgs{
 
@@ -19,10 +21,17 @@ struct DetectedObjectComparator {
   }
 };
 
-using DetectedObjectMap = std::map<detection_msgs::DetectedObject, double, DetectedObjectComparator>;
+using ObjectBeliefMap = std::map<detection_msgs::DetectedObject, double, DetectedObjectComparator>;
+using ObjectPositionMap = std::map<detection_msgs::DetectedObject, geometry_msgs::Point, DetectedObjectComparator>;
 
 } // namespace detection_msgs
 
+
+enum GripperMotionState {
+  IDLE = 0,
+  APPROACHING = 1,
+  RETREATING = 2
+};
 
 class IntentInference {
 public:
@@ -32,8 +41,11 @@ public:
 
   inline void setRecordedObjects(const detection_msgs::DetectedObjectArray& recorded_objects) {
     recorded_objects_ = recorded_objects;
+    belief_ = {};
+    position_to_base_link_ = {};
     for (const detection_msgs::DetectedObject& obj : recorded_objects.objects) {
       belief_[obj] = 1.0 / recorded_objects.objects.size();
+      position_to_base_link_[obj] = this->transformOdomToBaseLink(obj.centroid);
     }
   }
 
@@ -53,21 +65,25 @@ public:
     return max_it->first;
   }
 
-  inline detection_msgs::DetectedObjectMap getBelief() const {
+  inline detection_msgs::ObjectBeliefMap getBelief() const {
     return belief_;
   }
 
+  visualization_msgs::MarkerArray getBeliefVisualization() ;
+  void updatePositionToBaseLink();
   bool updateBelief();
-  visualization_msgs::MarkerArray getBeliefVisualization() const;
-
 
 private:
   double transition_probability_;
   geometry_msgs::Point gripper_position_;
   geometry_msgs::Point gripper_direction_;
   detection_msgs::DetectedObjectArray recorded_objects_;
-  detection_msgs::DetectedObjectMap belief_;
+  detection_msgs::ObjectBeliefMap belief_;
+  detection_msgs::ObjectPositionMap position_to_base_link_;
+  Tf2ListenerWrapper tf2_listener_;
+  GripperMotionState gripper_motion_state_;
   
+  geometry_msgs::Point transformOdomToBaseLink(const geometry_msgs::Point& point_in_odom);
   double getCosineSimilarity(const geometry_msgs::Point& user_direction, const geometry_msgs::Point& goal_direction) const;
   void normalizeBelief();
 };

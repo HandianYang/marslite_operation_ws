@@ -1,6 +1,8 @@
 #include "shared_control/shared_control.h"
 
 #include <visualization_msgs/MarkerArray.h>
+#include <tf2_ros/transform_broadcaster.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 /******************************************************
  *                  Constructors                      *  
@@ -11,7 +13,6 @@ SharedControl::SharedControl(const ros::NodeHandle& nh)
       intent_inference_(0.1) {
   this->initializePublishers();
   this->initializeSubscribers();
-  this->parseParameters();
 }
 
 /******************************************************
@@ -19,19 +20,29 @@ SharedControl::SharedControl(const ros::NodeHandle& nh)
  ****************************************************** */
 
 void SharedControl::run() {
-  static int count = 0;
   while (nh_.ok()) {
+    geometry_msgs::TransformStamped gripper_to_base_link_transform
+        = tf2_listener_.lookupTransform("base_link", "tm_gripper");
+    geometry_msgs::PoseStamped gripper_pose;
+    gripper_pose.header.frame_id = "base_link";
+    gripper_pose.header.stamp = ros::Time::now();
+    gripper_pose.pose.position.x = gripper_to_base_link_transform.transform.translation.x;
+    gripper_pose.pose.position.y = gripper_to_base_link_transform.transform.translation.y;
+    gripper_pose.pose.position.z = gripper_to_base_link_transform.transform.translation.z;
+    gripper_pose.pose.orientation = gripper_to_base_link_transform.transform.rotation;
+    intent_inference_.setGripperPosition(gripper_pose.pose.position);
+    controller_direction_estimator_.addwaypoint(gripper_pose.pose.position);
+    gripper_pose_publisher_.publish(gripper_pose);  // TEST
+
     geometry_msgs::Point user_direction;
-    user_direction.x = user_desired_gripper_pose_.pose.position.x - last_user_desired_gripper_pose_.pose.position.x;
-    user_direction.y = user_desired_gripper_pose_.pose.position.y - last_user_desired_gripper_pose_.pose.position.y;
-    user_direction.z = user_desired_gripper_pose_.pose.position.z - last_user_desired_gripper_pose_.pose.position.z;
-    intent_inference_.setGripperPosition(user_desired_gripper_pose_.pose.position);
+    if (controller_direction_estimator_.getSize() >= 2)
+      user_direction = controller_direction_estimator_.getAveragedDirection();
     intent_inference_.setGripperDirection(user_direction);
-    if (intent_inference_.updateBelief()) {
-      detection_msgs::DetectedObject most_likely_goal = intent_inference_.getMostLikelyGoal();
-      visualization_msgs::MarkerArray belief_visualization = intent_inference_.getBeliefVisualization();
-      belief_visualization_publisher_.publish(belief_visualization);
-    }
+    
+    intent_inference_.updatePositionToBaseLink();
+    intent_inference_.updateBelief();
+    visualization_msgs::MarkerArray belief_visualization = intent_inference_.getBeliefVisualization();
+    belief_visualization_publisher_.publish(belief_visualization);
     
     rate_.sleep();
     ros::spinOnce();
@@ -46,8 +57,14 @@ void SharedControl::initializePublishers() {
   desired_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
       "/cartesian_control/target_frame", 1
   );
+  desired_gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(
+      "/gripper/cmd_gripper", 1
+  );
   belief_visualization_publisher_ = nh_.advertise<visualization_msgs::MarkerArray>(
       "/marslite_control/intent_belief_marker", 1
+  );
+  gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
+      "/marslite_control/gripper_pose", 1
   );
 }
 
@@ -68,12 +85,4 @@ void SharedControl::initializeSubscribers() {
       "/marslite_control/user_desired_gripper_status", 1,
       &SharedControl::userDesiredGripperStatusCallback, this
   );
-}
-
-void SharedControl::parseParameters() {
-  ros::NodeHandle pnh("~");
-  // pnh.param("use_shared_controller", use_shared_controller_, false);
-
-  // ROS_INFO_STREAM("  use_shared_controller: "
-  //     << (use_shared_controller_ ? "true" : "false"));
 }
