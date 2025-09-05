@@ -2,6 +2,7 @@
 #define MARSLITE_CONTROl_SHARED_CONTROL_INTENT_INFERENCE_H
 
 #include <ros/ros.h>
+#include <std_msgs/Bool.h>
 #include <geometry_msgs/Point.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <map>
@@ -27,10 +28,14 @@ using ObjectPositionMap = std::map<detection_msgs::DetectedObject, geometry_msgs
 } // namespace detection_msgs
 
 
+const double kKappa = 3.0;  // proximity likelihood parameter
+
 enum GripperMotionState {
   IDLE = 0,
   APPROACHING = 1,
-  RETREATING = 2
+  RETREATING = 2,
+  GRASPING = 3,
+  NEAR_GOAL = 4
 };
 
 class IntentInference {
@@ -57,6 +62,10 @@ public:
     gripper_direction_ = direction;
   }
 
+  inline void setGripperStatus(const std_msgs::Bool& status) {
+    gripper_status_ = status;
+  }
+
   inline detection_msgs::DetectedObject getMostLikelyGoal() const {
     const auto max_it = std::max_element(belief_.begin(), belief_.end(),
                                         [](const auto& a, const auto& b) {
@@ -69,14 +78,17 @@ public:
     return belief_;
   }
 
-  visualization_msgs::MarkerArray getBeliefVisualization() ;
+  visualization_msgs::MarkerArray getBeliefVisualization();
+
   void updatePositionToBaseLink();
-  bool updateBelief();
+  void updateGripperMotionState();
+  void updateBelief();
 
 private:
   double transition_probability_;
   geometry_msgs::Point gripper_position_;
   geometry_msgs::Point gripper_direction_;
+  std_msgs::Bool gripper_status_;
   detection_msgs::DetectedObjectArray recorded_objects_;
   detection_msgs::ObjectBeliefMap belief_;
   detection_msgs::ObjectPositionMap position_to_base_link_;
@@ -84,6 +96,9 @@ private:
   GripperMotionState gripper_motion_state_;
   
   geometry_msgs::Point transformOdomToBaseLink(const geometry_msgs::Point& point_in_odom);
+  bool isTowardAnyGoal() const;
+  bool isNearAnyGoal() const;
+  geometry_msgs::Point getGoalDirection(const detection_msgs::DetectedObject& goal) const;
   double getCosineSimilarity(const geometry_msgs::Point& user_direction, const geometry_msgs::Point& goal_direction) const;
   void normalizeBelief();
 };

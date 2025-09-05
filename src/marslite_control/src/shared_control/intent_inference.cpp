@@ -99,6 +99,16 @@ IntentInference::IntentInference(
       gripper_marker.color.g = 0.0;
       gripper_marker.color.b = 0.0;
     break;
+    case GripperMotionState::NEAR_GOAL:
+      gripper_marker.color.r = 1.0;
+      gripper_marker.color.g = 1.0;
+      gripper_marker.color.b = 0.0;
+    break;
+    case GripperMotionState::GRASPING:
+      gripper_marker.color.r = 0.0;
+      gripper_marker.color.g = 0.0;
+      gripper_marker.color.b = 1.0;
+    break;
     case GripperMotionState::IDLE:
     default:
       gripper_marker.color.r = 0.0;
@@ -113,52 +123,61 @@ IntentInference::IntentInference(
 
 void IntentInference::updatePositionToBaseLink() {
   for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
-    position_to_base_link_[recorded_object] = this->transformOdomToBaseLink(recorded_object.centroid);
+    position_to_base_link_[recorded_object] =
+        this->transformOdomToBaseLink(recorded_object.centroid);
   }
 }
 
-bool IntentInference::updateBelief() {
-  if (recorded_objects_.objects.empty()) {
-    gripper_motion_state_ = GripperMotionState::IDLE;
-    return false;
-  }
-  
-  const double mag = std::sqrt(
+void IntentInference::updateGripperMotionState() {
+  const double gripper_displacement = std::sqrt(
       gripper_direction_.x * gripper_direction_.x +
       gripper_direction_.y * gripper_direction_.y +
       gripper_direction_.z * gripper_direction_.z
   );
-  if (mag < 1e-3) {
+
+  if (gripper_status_.data) {
+    gripper_motion_state_ = GripperMotionState::GRASPING;
+  } else if (recorded_objects_.objects.empty() || gripper_displacement < 1e-3) {
     gripper_motion_state_ = GripperMotionState::IDLE;
-    return false;
+  } else if (this->isNearAnyGoal()) {
+    gripper_motion_state_ = GripperMotionState::NEAR_GOAL;
+  }  else if (this->isTowardAnyGoal()) {
+    gripper_motion_state_ = GripperMotionState::APPROACHING;
+  } else {
+    gripper_motion_state_ = GripperMotionState::RETREATING;
+  }
+}
+
+void IntentInference::updateBelief() {
+  if (gripper_motion_state_ == GripperMotionState::IDLE
+      || gripper_motion_state_ == GripperMotionState::GRASPING
+      || gripper_motion_state_ == GripperMotionState::NEAR_GOAL) {
+    return;
+  }
+
+  if (gripper_motion_state_ == GripperMotionState::RETREATING) {
+    //   Gripper direction doesn't align with any goal (angle > 60° for all objects)
+    for (auto& [_, prob] : belief_) {
+      prob = 1.0 / belief_.size();
+    }
+    return;
   }
 
   detection_msgs::ObjectBeliefMap new_belief;
-  bool has_valid_likelihood = false;
-
-  const double kappa = 3.0;  // proximity likelihood parameter
   for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
-    geometry_msgs::Point goal_direction;
-    goal_direction.x = position_to_base_link_[recorded_object].x - gripper_position_.x;
-    goal_direction.y = position_to_base_link_[recorded_object].y - gripper_position_.y;
-    goal_direction.z = position_to_base_link_[recorded_object].z - gripper_position_.z;
+    geometry_msgs::Point goal_direction = this->getGoalDirection(recorded_object);
 
+    // (1) direction_likelihood
     const double direction_similarity = getCosineSimilarity(gripper_direction_, goal_direction);
-    if (direction_similarity < 0) {
-      // [cosine similarity threshold: 90° (cos(90°) = 0)]
-      // `similarity < 0` means the angle between gripper direction and goal
-      //   direction is larger than 90°
-      new_belief[recorded_object] = 0.0;
-      continue;
-    }
-    const double direction_likelihood = direction_similarity;  // use raw cosine similarity [0, 1]
+    const double direction_likelihood = (direction_similarity + 1) / 2;  // [-1, 1] -> [0, 1]
 
+    // (2) proximity likelihood
     const double distance = std::sqrt(
         goal_direction.x * goal_direction.x +
         goal_direction.y * goal_direction.y +
         goal_direction.z * goal_direction.z
     );
-    const double proximity_likelihood = std::exp(-kappa * distance);
+    const double proximity_likelihood = std::exp(-kKappa * distance);
 
     // Markov transition update
     const double likelihood = direction_likelihood * proximity_likelihood;
@@ -170,25 +189,11 @@ bool IntentInference::updateBelief() {
       sum_transitions += transition * probability;
     }
     new_belief[recorded_object] = likelihood * sum_transitions;
-    has_valid_likelihood = true;
-  }
-
-  if (!has_valid_likelihood) {
-    // [GripperMotionState::RETREATING]
-    //   Gripper direction doesn't align with any goal (angle > 90° for all objects)
-    gripper_motion_state_ = GripperMotionState::RETREATING;
-    for (auto& [_, prob] : belief_) {
-      prob = 1.0 / belief_.size();
-    }
-    return false;
   }
 
   belief_ = new_belief;
-  normalizeBelief();
-  gripper_motion_state_ = GripperMotionState::APPROACHING;
-  return true;
+  this->normalizeBelief();
 }
-
 
 /******************************************************
  *                  Private members                   *  
@@ -208,6 +213,44 @@ geometry_msgs::Point IntentInference::transformOdomToBaseLink(const geometry_msg
   return point_stamped_in_base_link.point;
 }
 
+bool IntentInference::isTowardAnyGoal() const {
+  for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
+    const geometry_msgs::Point goal_direction = this->getGoalDirection(recorded_object);
+    const double direction_similarity = getCosineSimilarity(gripper_direction_, goal_direction);
+    if (direction_similarity > 0.5) {
+      // [cosine similarity threshold: 60° (cos(60°) = 0.5)]
+      // `similarity > 0` means the angle between gripper direction and goal
+      //   direction is smaller than 60°
+      return true;
+    }
+  }
+  return false;
+}
+
+bool IntentInference::isNearAnyGoal() const {
+  for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
+    const geometry_msgs::Point goal_direction = this->getGoalDirection(recorded_object);
+    const double distance = std::sqrt(
+        goal_direction.x * goal_direction.x +
+        goal_direction.y * goal_direction.y +
+        goal_direction.z * goal_direction.z
+    );
+    if (distance < 0.05) {
+      // [distance threshold: 5cm]
+      return true;
+    }
+  }
+  return false;
+}
+
+geometry_msgs::Point IntentInference::getGoalDirection(const detection_msgs::DetectedObject& goal) const { 
+  geometry_msgs::Point goal_direction;
+  goal_direction.x = position_to_base_link_.at(goal).x - gripper_position_.x;
+  goal_direction.y = position_to_base_link_.at(goal).y - gripper_position_.y;
+  goal_direction.z = position_to_base_link_.at(goal).z - gripper_position_.z;
+  return goal_direction;
+}
+
 double IntentInference::getCosineSimilarity(
     const geometry_msgs::Point& user_direction,
     const geometry_msgs::Point& goal_direction) const {
@@ -222,7 +265,7 @@ double IntentInference::getCosineSimilarity(
       + goal_direction.y * goal_direction.y
       + goal_direction.z * goal_direction.z
   );
-  
+
   if (mag_user == 0.0 || mag_goal == 0.0) return 0.0;
   return dot / (mag_user * mag_goal); // [-1, 1]
 }

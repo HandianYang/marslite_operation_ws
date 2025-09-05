@@ -21,26 +21,10 @@ SharedControl::SharedControl(const ros::NodeHandle& nh)
 
 void SharedControl::run() {
   while (nh_.ok()) {
-    geometry_msgs::TransformStamped gripper_to_base_link_transform
-        = tf2_listener_.lookupTransform("base_link", "tm_gripper");
-    geometry_msgs::PoseStamped gripper_pose;
-    gripper_pose.header.frame_id = "base_link";
-    gripper_pose.header.stamp = ros::Time::now();
-    gripper_pose.pose.position.x = gripper_to_base_link_transform.transform.translation.x;
-    gripper_pose.pose.position.y = gripper_to_base_link_transform.transform.translation.y;
-    gripper_pose.pose.position.z = gripper_to_base_link_transform.transform.translation.z;
-    gripper_pose.pose.orientation = gripper_to_base_link_transform.transform.rotation;
-    intent_inference_.setGripperPosition(gripper_pose.pose.position);
-    controller_direction_estimator_.addwaypoint(gripper_pose.pose.position);
-    gripper_pose_publisher_.publish(gripper_pose);  // TEST
-
-    geometry_msgs::Point user_direction;
-    if (controller_direction_estimator_.getSize() >= 2)
-      user_direction = controller_direction_estimator_.getAveragedDirection();
-    intent_inference_.setGripperDirection(user_direction);
-    
     intent_inference_.updatePositionToBaseLink();
+    intent_inference_.updateGripperMotionState();
     intent_inference_.updateBelief();
+    
     visualization_msgs::MarkerArray belief_visualization = intent_inference_.getBeliefVisualization();
     belief_visualization_publisher_.publish(belief_visualization);
     
