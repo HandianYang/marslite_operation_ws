@@ -39,20 +39,13 @@ enum GripperMotionState {
 };
 
 class IntentInference {
-public:
-  IntentInference(const double& transition_probability = 0.1);
-  IntentInference(const detection_msgs::DetectedObjectArray& recorded_objects,
-                  const double& transition_probability = 0.1);
+ public:
+  IntentInference(const double& transition_probability = 0.1,
+                  const double& confidence_lower_bound = 0.3,
+                  const double& confidence_upper_bound = 0.9,
+                  const double& alpha_maximum = 0.7);
 
-  inline void setRecordedObjects(const detection_msgs::DetectedObjectArray& recorded_objects) {
-    recorded_objects_ = recorded_objects;
-    belief_ = {};
-    position_to_base_link_ = {};
-    for (const detection_msgs::DetectedObject& obj : recorded_objects.objects) {
-      belief_[obj] = 1.0 / recorded_objects.objects.size();
-      position_to_base_link_[obj] = this->transformOdomToBaseLink(obj.centroid);
-    }
-  }
+  void setRecordedObjects(const detection_msgs::DetectedObjectArray& recorded_objects);
 
   inline void setGripperPosition(const geometry_msgs::Point& position) {
     gripper_position_ = position;
@@ -67,11 +60,24 @@ public:
   }
 
   inline detection_msgs::DetectedObject getMostLikelyGoal() const {
+    // TODO: handle empty belief_
     const auto max_it = std::max_element(belief_.begin(), belief_.end(),
                                         [](const auto& a, const auto& b) {
                                             return a.second < b.second;
                                         });
     return max_it->first;
+  }
+
+  inline geometry_msgs::Point getMostLikelyGoalPosition() const {
+    return position_to_base_link_.at(this->getMostLikelyGoal());
+  }
+
+  inline double getConfidence() const {
+    return confidence_;
+  }
+
+  inline double getAlpha() const {
+    return alpha_;
   }
 
   inline detection_msgs::ObjectBeliefMap getBelief() const {
@@ -80,12 +86,19 @@ public:
 
   visualization_msgs::MarkerArray getBeliefVisualization();
 
-  void updatePositionToBaseLink();
-  void updateGripperMotionState();
+  geometry_msgs::Point getGoalDirection(const detection_msgs::DetectedObject& goal) const;
+
   void updateBelief();
 
-private:
-  double transition_probability_;
+ private:
+  // constants
+  double transition_probability_; // [0,1], constant
+  double confidence_lower_bound_; // [0,1], constant
+  double confidence_upper_bound_; // [0,1], constant
+  double alpha_maximum_; // [0,1], constant
+
+  double confidence_; // [0,1]
+  double alpha_;  // [0,1]
   geometry_msgs::Point gripper_position_;
   geometry_msgs::Point gripper_direction_;
   std_msgs::Bool gripper_status_;
@@ -94,13 +107,18 @@ private:
   detection_msgs::ObjectPositionMap position_to_base_link_;
   Tf2ListenerWrapper tf2_listener_;
   GripperMotionState gripper_motion_state_;
-  
+
+  void updatePositionToBaseLink();
   geometry_msgs::Point transformOdomToBaseLink(const geometry_msgs::Point& point_in_odom);
-  bool isTowardAnyGoal() const;
+
+  void updateGripperMotionState();
   bool isNearAnyGoal() const;
-  geometry_msgs::Point getGoalDirection(const detection_msgs::DetectedObject& goal) const;
+  bool isTowardAnyGoal() const;
+  
   double getCosineSimilarity(const geometry_msgs::Point& user_direction, const geometry_msgs::Point& goal_direction) const;
   void normalizeBelief();
+  void calculateConfidence();
+  void calculateAlpha();
 };
 
 #endif // MARSLITE_CONTROl_SHARED_CONTROL_INTENT_INFERENCE_H
