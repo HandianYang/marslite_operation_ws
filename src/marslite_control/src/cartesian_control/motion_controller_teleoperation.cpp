@@ -1,11 +1,13 @@
 #include "cartesian_control/motion_controller_teleoperation.h"
+#include <Eigen/Dense>
+#include <cmath>
 
 /******************************************************
  *                  Constructors                      *  
  ****************************************************** */
 
 MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHandle& nh)
-    : nh_(nh), rate_(ros::Rate(25)), is_begin_teleoperation_(false),
+    : nh_(nh), loop_rate_(10), is_begin_teleoperation_(false),
       is_position_change_enabled_(false), is_orientation_change_enabled_(false) {
   this->parseParameters();
   this->initializePublishers();
@@ -16,12 +18,27 @@ MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHand
  *                  Public members                    *  
  ****************************************************** */
 
-void MotionControllerTeleoperation::teleoperate() {
+void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseStamped& target_pose) {
+  initial_gripper_pose_ = desired_gripper_pose_ = target_pose;
+  target_frame_publisher_.publish(target_pose);
+  
+  // Perform teleoperation until the current gripper pose reaches the target pose
+  this->lookupCurrentGripperPose();
+  while (nh_.ok() && !this->targetPoseIsReached(target_pose)) {
+    ROS_INFO_STREAM_THROTTLE(5, "Waiting to reach the target pose...");
+    this->lookupCurrentGripperPose();
+    loop_rate_.sleep();
+    ros::spinOnce();
+  }
+  ROS_INFO("Reached the target pose.");
+}
+
+void MotionControllerTeleoperation::run() {
   while (nh_.ok()) {
-    this->lookupCurrentGripperTransform();
-    if (is_position_change_enabled_ || is_orientation_change_enabled_) {
+    this->lookupCurrentGripperPose();
+    if (this->isAnySafetyButtonPressed()) {
       if (is_begin_teleoperation_) {
-        initial_left_controller_pose_.pose = current_left_controller_pose_.pose;
+        this->initializeLeftControllerPose();
         is_begin_teleoperation_ = false;
       }
       this->calculateDesiredGripperPose();
@@ -34,7 +51,7 @@ void MotionControllerTeleoperation::teleoperate() {
     this->publishDesiredGripperPose();
     this->publishMobilePlatformVelocity();
 
-    rate_.sleep();
+    loop_rate_.sleep();
     ros::spinOnce();
   }
 }
@@ -64,6 +81,8 @@ void MotionControllerTeleoperation::parseParameters() {
 }
 
 void MotionControllerTeleoperation::initializePublishers() {
+  target_frame_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
+      "/cartesian_control/target_frame", 1);
   // The desired gripper pose will be published to different topics according
   // to the `use_shared_controller_` parameter.
   // - use_shared_controller_ = true: published to shared controller
@@ -74,12 +93,12 @@ void MotionControllerTeleoperation::initializePublishers() {
   const std::string gripper_status_topic = use_shared_controller_ ?
       "/marslite_control/user_desired_gripper_status" :
       "/gripper/cmd_gripper";
-  desired_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(gripper_pose_topic, 1);
-  desired_gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(gripper_status_topic, 1);
-  record_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
-      "/marslite_control/record_signal", 1);
+  gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(gripper_pose_topic, 1);
+  gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(gripper_status_topic, 1);
   mobile_platform_velocity_publisher_ = nh_.advertise<geometry_msgs::Twist>(
       "/mob_plat/cmd_vel", 1);
+  record_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
+      "/marslite_control/record_signal", 1);
 }
 
 void MotionControllerTeleoperation::initializeSubscribers() {
@@ -90,8 +109,18 @@ void MotionControllerTeleoperation::initializeSubscribers() {
 }
 
 //
-// utility operations (supports teleoperate())
+// utility operations (supports run())
 //
+
+void MotionControllerTeleoperation::lookupCurrentGripperPose() {
+  const geometry_msgs::TransformStamped current_gripper_transform = 
+      tf2_listener_.lookupTransform("base_link", "tm_gripper");
+  current_gripper_pose_.header = current_gripper_transform.header;
+  current_gripper_pose_.pose.position.x = current_gripper_transform.transform.translation.x;
+  current_gripper_pose_.pose.position.y = current_gripper_transform.transform.translation.y;
+  current_gripper_pose_.pose.position.z = current_gripper_transform.transform.translation.z;
+  current_gripper_pose_.pose.orientation = current_gripper_transform.transform.rotation;
+}
 
 void MotionControllerTeleoperation::calculateDesiredGripperPose() {
   if (is_position_change_enabled_) {
@@ -105,6 +134,32 @@ void MotionControllerTeleoperation::calculateDesiredGripperPose() {
   } else {
     this->resetOrientationalMovement();
   }
+}
+
+const bool MotionControllerTeleoperation::targetPoseIsReached(const geometry_msgs::PoseStamped& target_pose) const {
+  const double dx = current_gripper_pose_.pose.position.x - target_pose.pose.position.x;
+  const double dy = current_gripper_pose_.pose.position.y - target_pose.pose.position.y;
+  const double dz = current_gripper_pose_.pose.position.z - target_pose.pose.position.z;
+  const double position_error = sqrt(dx*dx + dy*dy + dz*dz);
+  if (position_error > kPositionTolerance)  return false;
+
+  auto toEig = [](const geometry_msgs::Quaternion& q){
+    return Eigen::Quaterniond(q.w, q.x, q.y, q.z);
+  };
+  Eigen::Quaterniond q1 = toEig(current_gripper_pose_.pose.orientation);
+  Eigen::Quaterniond q2 = toEig(target_pose.pose.orientation);
+  const double n1 = q1.norm(), n2 = q2.norm();
+  if (n1 < 1e-12 || n2 < 1e-12) return false;
+  q1.normalize(); q2.normalize();
+
+  // Smallest angular distance between orientations.
+  // |dot| accounts for the double-cover (q and -q).
+  const double dot = std::abs(q1.dot(q2));
+  // Numerical clamp: acos argument must be in [0,1].
+  auto clamp01 = [](double x) { return std::max(0.0, std::min(1.0, x)); };
+  const double orientation_error = 2.0 * std::acos(clamp01(dot));
+
+  return orientation_error <= kOrientationTolerance;
 }
 
 //
@@ -307,7 +362,7 @@ void MotionControllerTeleoperation::toggleGripperStatus() {
   ros::Time current_time = ros::Time::now();
   if ((current_time - last_toggle_time).toSec() > 0.5) {
     desired_gripper_status_.data = !desired_gripper_status_.data;
-    desired_gripper_status_publisher_.publish(desired_gripper_status_);
+    gripper_status_publisher_.publish(desired_gripper_status_);
     last_toggle_time = current_time;
   }
 }
