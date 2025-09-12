@@ -27,8 +27,10 @@ using ObjectPositionMap = std::map<detection_msgs::DetectedObject, geometry_msgs
 
 } // namespace detection_msgs
 
-
-const double kKappa = 3.0;  // proximity likelihood parameter
+// proximity likelihood parameter
+const double kKappa = 3.0;  
+// confidence threshold to lock target
+const double kLockTargetConfidenceThreshold = 0.3;
 
 enum GripperMotionState {
   IDLE = 0,
@@ -84,6 +86,10 @@ class IntentInference {
     return belief_;
   }
 
+  inline const bool isApproaching() const {
+    return gripper_motion_state_ == GripperMotionState::APPROACHING;
+  }
+
   visualization_msgs::MarkerArray getBeliefVisualization();
 
   geometry_msgs::Point getGoalDirection(const detection_msgs::DetectedObject& goal) const;
@@ -91,6 +97,19 @@ class IntentInference {
   void updateBelief();
 
  private:
+  void updatePositionToBaseLink();
+  geometry_msgs::Point transformOdomToBaseLink(const geometry_msgs::Point& point_in_odom);
+
+  void updateGripperMotionState();
+  bool isNearAnyGoal() const;
+  bool isTowardAnyGoal() const;
+  
+  double getCosineSimilarity(const geometry_msgs::Point& user_direction,
+                             const geometry_msgs::Point& goal_direction) const;
+  void normalizeBelief();
+  void calculateConfidence();
+  void calculateAlpha();
+
   // constants
   double transition_probability_; // [0,1], constant
   double confidence_lower_bound_; // [0,1], constant
@@ -107,18 +126,6 @@ class IntentInference {
   detection_msgs::ObjectPositionMap position_to_base_link_;
   Tf2ListenerWrapper tf2_listener_;
   GripperMotionState gripper_motion_state_;
-
-  void updatePositionToBaseLink();
-  geometry_msgs::Point transformOdomToBaseLink(const geometry_msgs::Point& point_in_odom);
-
-  void updateGripperMotionState();
-  bool isNearAnyGoal() const;
-  bool isTowardAnyGoal() const;
-  
-  double getCosineSimilarity(const geometry_msgs::Point& user_direction, const geometry_msgs::Point& goal_direction) const;
-  void normalizeBelief();
-  void calculateConfidence();
-  void calculateAlpha();
 };
 
 #endif // MARSLITE_CONTROl_SHARED_CONTROL_INTENT_INFERENCE_H

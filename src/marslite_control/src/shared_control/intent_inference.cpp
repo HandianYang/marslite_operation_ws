@@ -97,9 +97,15 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
   switch (gripper_motion_state_) {
     case GripperMotionState::APPROACHING:
       // light green (alpha = 0) to dark green (alpha = 1)
-      gripper_marker.color.r = 0.5 - alpha_ * 0.5;
-      gripper_marker.color.g = 1.0;
-      gripper_marker.color.b = 0.5 - alpha_ * 0.5;
+      if (confidence_ < 0.3) {
+        gripper_marker.color.r = 0.5;
+        gripper_marker.color.g = 1.0;
+        gripper_marker.color.b = 0.5;
+      } else {
+        gripper_marker.color.r = 0.0;
+        gripper_marker.color.g = 1.0;
+        gripper_marker.color.b = 0.0;
+      }
     break;
     case GripperMotionState::RETREATING:
       // red
@@ -268,7 +274,7 @@ bool IntentInference::isNearAnyGoal() const {
         goal_direction.y * goal_direction.y +
         goal_direction.z * goal_direction.z
     );
-    if (distance < 0.1) {
+    if (distance < 0.03) {
       // [distance threshold: 10cm]
       return true;
     }
