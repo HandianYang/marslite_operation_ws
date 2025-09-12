@@ -21,7 +21,7 @@ MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHand
 void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseStamped& target_pose) {
   initial_gripper_pose_ = desired_gripper_pose_ = target_pose;
   target_frame_publisher_.publish(target_pose);
-
+  
   // Perform teleoperation until the current gripper pose reaches the target pose
   this->lookupCurrentGripperPose();
   while (nh_.ok() && !this->targetPoseIsReached(target_pose)) {
