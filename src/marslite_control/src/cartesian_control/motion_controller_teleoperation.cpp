@@ -23,10 +23,8 @@ void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseS
   target_frame_publisher_.publish(target_pose);
   
   // Perform teleoperation until the current gripper pose reaches the target pose
-  this->lookupCurrentGripperPose();
   while (nh_.ok() && !this->targetPoseIsReached(target_pose)) {
     ROS_INFO_STREAM_THROTTLE(5, "Waiting to reach the target pose...");
-    this->lookupCurrentGripperPose();
     loop_rate_.sleep();
     ros::spinOnce();
   }
@@ -35,7 +33,6 @@ void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseS
 
 void MotionControllerTeleoperation::run() {
   while (nh_.ok()) {
-    this->lookupCurrentGripperPose();
     if (this->isAnySafetyButtonPressed()) {
       if (is_begin_teleoperation_) {
         this->initializeLeftControllerPose();
@@ -43,9 +40,6 @@ void MotionControllerTeleoperation::run() {
       }
       this->calculateDesiredGripperPose();
     } else {
-      // this->resetPositionalMovement();
-      // this->resetOrientationalMovement();
-      // initial_gripper_pose_ = desired_gripper_pose_;
       this->initializeGripperPose();
       is_begin_teleoperation_ = true;
     }
@@ -60,10 +54,6 @@ void MotionControllerTeleoperation::run() {
 /******************************************************
  *                  Private members                   *  
  ****************************************************** */
-
-// 
-// initialization
-// 
 
 void MotionControllerTeleoperation::parseParameters() {
   ros::NodeHandle pnh("~");
@@ -103,24 +93,16 @@ void MotionControllerTeleoperation::initializePublishers() {
 }
 
 void MotionControllerTeleoperation::initializeSubscribers() {
+  current_gripper_pose_subscriber_ = nh_.subscribe(
+      "/marslite_control/current_gripper_pose", 1,
+      &MotionControllerTeleoperation::currentGripperPoseCallback, this
+  );
   left_controller_pose_subscriber_ = nh_.subscribe("/unity/controller/left/pose", 1,
       &MotionControllerTeleoperation::leftControllerPoseCallback, this);
   left_controller_joy_subscriber_ = nh_.subscribe("/unity/controller/left/joy", 1,
       &MotionControllerTeleoperation::leftControllerJoyCallback, this);
-}
-
-//
-// utility operations (supports run())
-//
-
-void MotionControllerTeleoperation::lookupCurrentGripperPose() {
-  const geometry_msgs::TransformStamped current_gripper_transform = 
-      tf2_listener_.lookupTransform("base_link", "tm_gripper");
-  current_gripper_pose_.header = current_gripper_transform.header;
-  current_gripper_pose_.pose.position.x = current_gripper_transform.transform.translation.x;
-  current_gripper_pose_.pose.position.y = current_gripper_transform.transform.translation.y;
-  current_gripper_pose_.pose.position.z = current_gripper_transform.transform.translation.z;
-  current_gripper_pose_.pose.orientation = current_gripper_transform.transform.rotation;
+  reset_pose_signal_subscriber_ = nh_.subscribe("/marslite_control/lock_state_signal", 1,
+      &MotionControllerTeleoperation::resetPoseSignalCallback, this);
 }
 
 void MotionControllerTeleoperation::calculateDesiredGripperPose() {
@@ -163,10 +145,6 @@ const bool MotionControllerTeleoperation::targetPoseIsReached(const geometry_msg
   return orientation_error <= kOrientationTolerance;
 }
 
-//
-// utility operations (supports calculateDesiredGripperPose())
-//
-
 void MotionControllerTeleoperation::calculateDesiredGripperPosition() {
   geometry_msgs::Vector3 position_difference = this->getPositionDifference();
   geometry_msgs::Vector3 scaled_position_difference = this->scalePositionDifference(position_difference);
@@ -175,9 +153,12 @@ void MotionControllerTeleoperation::calculateDesiredGripperPosition() {
 
 geometry_msgs::Vector3 MotionControllerTeleoperation::getPositionDifference() {
   geometry_msgs::Vector3 position_difference;
-  position_difference.x = current_left_controller_pose_.pose.position.x - initial_left_controller_pose_.pose.position.x;
-  position_difference.y = current_left_controller_pose_.pose.position.y - initial_left_controller_pose_.pose.position.y;
-  position_difference.z = current_left_controller_pose_.pose.position.z - initial_left_controller_pose_.pose.position.z;
+  position_difference.x = current_left_controller_pose_.pose.position.x
+      - initial_left_controller_pose_.pose.position.x;
+  position_difference.y = current_left_controller_pose_.pose.position.y
+      - initial_left_controller_pose_.pose.position.y;
+  position_difference.z = current_left_controller_pose_.pose.position.z
+      - initial_left_controller_pose_.pose.position.z;
   return position_difference;
 }
 
@@ -194,20 +175,31 @@ void MotionControllerTeleoperation::applyPositionDifference(
     const geometry_msgs::Vector3& scaled_position_difference) {
   switch (gripper_direction_) {
     case GripperDirection::FRONT:
+      // | controller |   gripper  |
+      // |------------|------------|
+      // | front/back | front/back |
+      // | left/right | left/right |
+      // |   up/down  |   up/down  |
       desired_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x + scaled_position_difference.x;
       desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.y;
       desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
       break;
     case GripperDirection::LEFT:
-      // controller: front/back -> gripper: left/right
-      // controller: left/right -> gripper: back/front
+      // | controller |   gripper  |
+      // |------------|------------|
+      // | front/back | left/right |
+      // | left/right | back/front |
+      // |   up/down  |   up/down  |
       desired_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x - scaled_position_difference.y;
       desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.x;
       desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
       break;
     case GripperDirection::RIGHT:
-      // controller: front/back -> gripper: right/left
-      // controller: left/right -> gripper: front/back
+      // | controller |   gripper  |
+      // |------------|------------|
+      // | front/back | right/left |
+      // | left/right | front/back |
+      // |   up/down  |   up/down  |
       desired_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x + scaled_position_difference.y;
       desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y - scaled_position_difference.x;
       desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
@@ -307,11 +299,13 @@ double MotionControllerTeleoperation::restrictAngleWithinPI(const double& angle)
   return angle;
 }
 
-//
-// callbacks
-//
+void MotionControllerTeleoperation::currentGripperPoseCallback(
+    const geometry_msgs::PoseStamped::ConstPtr& msg) {
+  current_gripper_pose_ = *msg;
+}
 
-void MotionControllerTeleoperation::leftControllerPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
+void MotionControllerTeleoperation::leftControllerPoseCallback(
+    const geometry_msgs::PoseStamped::ConstPtr& msg) {
   current_left_controller_pose_.pose = msg->pose;
 }
 
@@ -366,4 +360,9 @@ void MotionControllerTeleoperation::toggleGripperStatus() {
     gripper_status_publisher_.publish(desired_gripper_status_);
     last_toggle_time = current_time;
   }
+}
+
+void MotionControllerTeleoperation::resetPoseSignalCallback(const std_msgs::Bool::ConstPtr& msg) {
+  this->initializeGripperPose();
+  this->initializeLeftControllerPose();
 }

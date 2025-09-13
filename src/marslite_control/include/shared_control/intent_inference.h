@@ -28,9 +28,16 @@ using ObjectPositionMap = std::map<detection_msgs::DetectedObject, geometry_msgs
 } // namespace detection_msgs
 
 // proximity likelihood parameter
-const double kKappa = 3.0;  
+const double kProximityLikelihoodParameter = 3.0;
 // confidence threshold to lock target
 const double kLockTargetConfidenceThreshold = 0.3;
+// user command displacement threshold to consider "idle"
+const double kIdleDisplacementThreshold = 1e-3; // [m]
+// distance threshold to consider "near" a goal
+const double kNearGoalDistanceThreshold = 0.05; // [m]
+// direction similarity threshold to consider "toward" a goal
+//   (similarity > 0.5 == angle < 60 degrees)
+const double kDirectionSimilarityThreshold = 0.5; // [cosine similarity]
 
 enum GripperMotionState {
   IDLE = 0,
@@ -44,8 +51,7 @@ class IntentInference {
  public:
   IntentInference(const double& transition_probability = 0.1,
                   const double& confidence_lower_bound = 0.3,
-                  const double& confidence_upper_bound = 0.9,
-                  const double& alpha_maximum = 0.7);
+                  const double& confidence_upper_bound = 0.9);
 
   void setRecordedObjects(const detection_msgs::DetectedObjectArray& recorded_objects);
 
@@ -53,8 +59,8 @@ class IntentInference {
     gripper_position_ = position;
   }
   
-  inline void setGripperDirection(const geometry_msgs::Point& direction) {
-    gripper_direction_ = direction;
+  inline void setUserCommandDirection(const geometry_msgs::Point& direction) {
+    user_command_direction_ = direction;
   }
 
   inline void setGripperStatus(const std_msgs::Bool& status) {
@@ -62,7 +68,6 @@ class IntentInference {
   }
 
   inline detection_msgs::DetectedObject getMostLikelyGoal() const {
-    // TODO: handle empty belief_
     const auto max_it = std::max_element(belief_.begin(), belief_.end(),
                                         [](const auto& a, const auto& b) {
                                             return a.second < b.second;
@@ -78,16 +83,13 @@ class IntentInference {
     return confidence_;
   }
 
-  inline double getAlpha() const {
-    return alpha_;
-  }
-
   inline detection_msgs::ObjectBeliefMap getBelief() const {
     return belief_;
   }
-
-  inline const bool isApproaching() const {
-    return gripper_motion_state_ == GripperMotionState::APPROACHING;
+  
+  inline const bool isNotLocked() const {
+    return !(gripper_motion_state_ == GripperMotionState::APPROACHING
+        && confidence_ >= kLockTargetConfidenceThreshold);
   }
 
   visualization_msgs::MarkerArray getBeliefVisualization();
@@ -99,8 +101,8 @@ class IntentInference {
  private:
   void updatePositionToBaseLink();
   geometry_msgs::Point transformOdomToBaseLink(const geometry_msgs::Point& point_in_odom);
-
   void updateGripperMotionState();
+  bool isUserCommandIdle() const;
   bool isNearAnyGoal() const;
   bool isTowardAnyGoal() const;
   
@@ -108,18 +110,14 @@ class IntentInference {
                              const geometry_msgs::Point& goal_direction) const;
   void normalizeBelief();
   void calculateConfidence();
-  void calculateAlpha();
 
-  // constants
   double transition_probability_; // [0,1], constant
   double confidence_lower_bound_; // [0,1], constant
   double confidence_upper_bound_; // [0,1], constant
-  double alpha_maximum_; // [0,1], constant
-
   double confidence_; // [0,1]
-  double alpha_;  // [0,1]
+  
   geometry_msgs::Point gripper_position_;
-  geometry_msgs::Point gripper_direction_;
+  geometry_msgs::Point user_command_direction_;
   std_msgs::Bool gripper_status_;
   detection_msgs::DetectedObjectArray recorded_objects_;
   detection_msgs::ObjectBeliefMap belief_;

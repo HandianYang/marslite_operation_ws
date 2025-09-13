@@ -67,6 +67,13 @@ include_directories(
 # Test
 ################################################################################
 
+add_executable(gripper_pose_publisher_node
+  src/gripper_pose_publisher_node.cpp
+)
+target_link_libraries(gripper_pose_publisher_node
+  ${catkin_LIBRARIES}
+)
+
 add_executable(motion_controller_teleoperation_node
   example/motion_controller_teleoperation_node.cpp
   src/cartesian_control/motion_controller_teleoperation.cpp

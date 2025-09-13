@@ -20,25 +20,9 @@ class SharedControl {
   void initializeSubscribers();
   void publishIntentBeliefVisualization();
   void publishBlendingGripperPose();
-
-  // geometry_msgs::Point getBlendingDirection();
-  // geometry_msgs::Point normalizeDirection(const geometry_msgs::Point& direction);
-  // geometry_msgs::Point scaleDirection(const geometry_msgs::Point& direction, const double& scale);
-
   geometry_msgs::PoseStamped getTargetPose();
 
-  inline void lookupCurrentGripperPose() {
-    geometry_msgs::TransformStamped current_gripper_transform =
-        tf2_listener_.lookupTransform("base_link", "tm_gripper");
-    current_gripper_pose_.header = current_gripper_transform.header;
-    current_gripper_pose_.pose.position.x = current_gripper_transform.transform.translation.x;
-    current_gripper_pose_.pose.position.y = current_gripper_transform.transform.translation.y;
-    current_gripper_pose_.pose.position.z = current_gripper_transform.transform.translation.z;
-    current_gripper_pose_.pose.orientation = current_gripper_transform.transform.rotation;
-    current_gripper_pose_publisher_.publish(current_gripper_pose_); // for testing
-  }
-
-  // Callbacks
+  void currentGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
   void detectedObjectsCallback(const detection_msgs::DetectedObjectArray::ConstPtr& objects);
   void recordSignalCallback(const std_msgs::Bool::ConstPtr& signal);
   void userDesiredGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& user_desired_gripper_pose);
@@ -50,7 +34,8 @@ class SharedControl {
   ros::Publisher desired_gripper_pose_publisher_;
   ros::Publisher desired_gripper_status_publisher_;
   ros::Publisher belief_visualization_publisher_;
-  ros::Publisher current_gripper_pose_publisher_;
+  ros::Publisher reset_pose_signal_publisher_;
+  ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber detected_objects_subscriber_;
   ros::Subscriber record_signal_subscriber_;
   ros::Subscriber user_desired_gripper_pose_subscriber_;
@@ -58,8 +43,7 @@ class SharedControl {
 
   // self-defined class instances
   IntentInference intent_inference_;
-  Tf2ListenerWrapper tf2_listener_;
-  ControllerDirectionEstimator controller_direction_estimator_{10};
+  ControllerDirectionEstimator controller_direction_estimator_{5};
 
   // ROS messages
   geometry_msgs::PoseStamped current_gripper_pose_;
@@ -68,7 +52,7 @@ class SharedControl {
 
   // flags
   bool begin_recording_;  // true if record_siganl is received
-  bool begin_shared_control_;
+  bool is_locked_;  // true if intent_inference_ is in LOCK state
 };
 
 #endif // #ifndef MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROL_H

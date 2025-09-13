@@ -51,26 +51,21 @@ class MotionControllerTeleoperation {
 
   void run();
 
+ private:
+  void parseParameters();
+  void initializePublishers();
+  void initializeSubscribers();
+  
+  inline const bool isAnySafetyButtonPressed() const {
+    return is_position_change_enabled_ || is_orientation_change_enabled_;
+  }
+
   inline void initializeLeftControllerPose() {
     initial_left_controller_pose_ = current_left_controller_pose_;
   }
 
   inline void initializeGripperPose() {
     initial_gripper_pose_ = desired_gripper_pose_ = current_gripper_pose_;
-  }
-
- private:
-  // initialization
-  void parseParameters();
-  void initializePublishers();
-  void initializeSubscribers();
-
-  // utility operations (supports run())
-
-  void lookupCurrentGripperPose();
-  
-  inline const bool isAnySafetyButtonPressed() const {
-    return is_position_change_enabled_ || is_orientation_change_enabled_;
   }
 
   void calculateDesiredGripperPose();
@@ -93,7 +88,6 @@ class MotionControllerTeleoperation {
 
   const bool targetPoseIsReached(const geometry_msgs::PoseStamped& target_pose) const;
 
-  // utility operations (supports calculateDesiredGripperPose())
   void calculateDesiredGripperPosition();
   geometry_msgs::Vector3 getPositionDifference();
   geometry_msgs::Vector3 scalePositionDifference(const geometry_msgs::Vector3& position_difference);
@@ -107,10 +101,11 @@ class MotionControllerTeleoperation {
   RPY getRPYFromPose(const geometry_msgs::PoseStamped& pose);
   double restrictAngleWithinPI(const double& angle);
 
-  // callbacks
+  void currentGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
   void leftControllerPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
   void leftControllerJoyCallback(const sensor_msgs::Joy::ConstPtr& msg);
   void toggleGripperStatus();
+  void resetPoseSignalCallback(const std_msgs::Bool::ConstPtr& msg);
 
   // ROS mechanisms
   ros::NodeHandle nh_;
@@ -120,9 +115,10 @@ class MotionControllerTeleoperation {
   ros::Publisher gripper_status_publisher_;
   ros::Publisher record_signal_publisher_;
   ros::Publisher mobile_platform_velocity_publisher_;
+  ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber left_controller_pose_subscriber_;
   ros::Subscriber left_controller_joy_subscriber_;
-  Tf2ListenerWrapper tf2_listener_;
+  ros::Subscriber reset_pose_signal_subscriber_;
 
   // ROS messages
   geometry_msgs::PoseStamped initial_left_controller_pose_;

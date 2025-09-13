@@ -10,14 +10,11 @@
 
 IntentInference::IntentInference(const double& transition_probability,
                                  const double& confidence_lower_bound,
-                                 const double& confidence_upper_bound,
-                                 const double& alpha_maximum)
-    : gripper_motion_state_(GripperMotionState::IDLE),
-      confidence_(0.0), alpha_(0.0),
+                                 const double& confidence_upper_bound)
+    : gripper_motion_state_(GripperMotionState::IDLE), confidence_(0.0), 
       transition_probability_(transition_probability),
       confidence_lower_bound_(confidence_lower_bound),
-      confidence_upper_bound_(confidence_upper_bound),
-      alpha_maximum_(alpha_maximum) {
+      confidence_upper_bound_(confidence_upper_bound) {
   belief_ = {};
   position_to_base_link_ = {};
 }
@@ -96,12 +93,13 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
 
   switch (gripper_motion_state_) {
     case GripperMotionState::APPROACHING:
-      // light green (alpha = 0) to dark green (alpha = 1)
-      if (confidence_ < 0.3) {
+      if (this->isNotLocked()) {
+        // APPROACHING but not locked yet -> light green
         gripper_marker.color.r = 0.5;
         gripper_marker.color.g = 1.0;
         gripper_marker.color.b = 0.5;
       } else {
+        // APPROACHING and locked -> green
         gripper_marker.color.r = 0.0;
         gripper_marker.color.g = 1.0;
         gripper_marker.color.b = 0.0;
@@ -135,25 +133,6 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
   }
   marker_array.markers.push_back(gripper_marker);
 
-  // Alpha value text marker
-  visualization_msgs::Marker alpha_text_marker;
-  alpha_text_marker.header.frame_id = "base_link";
-  alpha_text_marker.header.stamp = ros::Time::now();
-  alpha_text_marker.ns = "alpha_value_text";
-  alpha_text_marker.id = id++;
-  alpha_text_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
-  alpha_text_marker.action = visualization_msgs::Marker::ADD;
-  alpha_text_marker.pose.position.x = gripper_position_.x;
-  alpha_text_marker.pose.position.y = gripper_position_.y;
-  alpha_text_marker.pose.position.z = gripper_position_.z + 0.2;
-  alpha_text_marker.scale.z = 0.04;
-  alpha_text_marker.color.r = 1.0;
-  alpha_text_marker.color.g = 1.0;
-  alpha_text_marker.color.b = 1.0;
-  alpha_text_marker.color.a = 1.0;
-  alpha_text_marker.text = std::to_string(alpha_);
-  marker_array.markers.push_back(alpha_text_marker);
-
   return marker_array;
 }
 
@@ -172,16 +151,13 @@ void IntentInference::updateBelief() {
   if (gripper_motion_state_ == GripperMotionState::IDLE
       || gripper_motion_state_ == GripperMotionState::GRASPING
       || gripper_motion_state_ == GripperMotionState::NEAR_GOAL) {
-    alpha_ = 0.0;
     return;
   }
 
   if (gripper_motion_state_ == GripperMotionState::RETREATING) {
-    // -> Gripper direction doesn't align with any goal (angle > 60° for all objects)
     for (auto& [_, prob] : belief_) {
       prob = 1.0 / belief_.size();
     }
-    alpha_ = 0.0;
     return;
   }
 
@@ -192,16 +168,16 @@ void IntentInference::updateBelief() {
     geometry_msgs::Point goal_direction = this->getGoalDirection(recorded_object);
 
     // (1) direction_likelihood
-    const double direction_similarity = getCosineSimilarity(gripper_direction_, goal_direction);
+    const double direction_similarity = getCosineSimilarity(user_command_direction_, goal_direction);
     const double direction_likelihood = (direction_similarity + 1) / 2;  // [-1, 1] -> [0, 1]
 
     // (2) proximity likelihood
-    const double distance = std::sqrt(
+    const double goal_distance = std::sqrt(
         goal_direction.x * goal_direction.x +
         goal_direction.y * goal_direction.y +
         goal_direction.z * goal_direction.z
     );
-    const double proximity_likelihood = std::exp(-kKappa * distance);
+    const double proximity_likelihood = std::exp(-kProximityLikelihoodParameter * goal_distance);
 
     // Markov transition update
     const double likelihood = direction_likelihood * proximity_likelihood;
@@ -218,7 +194,6 @@ void IntentInference::updateBelief() {
   belief_ = new_belief;
   this->normalizeBelief();
   this->calculateConfidence();
-  this->calculateAlpha();
 }
 
 /******************************************************
@@ -247,15 +222,9 @@ geometry_msgs::Point IntentInference::transformOdomToBaseLink(const geometry_msg
 }
 
 void IntentInference::updateGripperMotionState() {
-  const double gripper_displacement = std::sqrt(
-      gripper_direction_.x * gripper_direction_.x +
-      gripper_direction_.y * gripper_direction_.y +
-      gripper_direction_.z * gripper_direction_.z
-  );
-
   if (gripper_status_.data) {
     gripper_motion_state_ = GripperMotionState::GRASPING;
-  } else if (recorded_objects_.objects.empty() || gripper_displacement < 1e-3) {
+  } else if (recorded_objects_.objects.empty() || this->isUserCommandIdle()) {
     gripper_motion_state_ = GripperMotionState::IDLE;
   } else if (this->isNearAnyGoal()) {
     gripper_motion_state_ = GripperMotionState::NEAR_GOAL;
@@ -266,16 +235,24 @@ void IntentInference::updateGripperMotionState() {
   }
 }
 
+bool IntentInference::isUserCommandIdle() const {
+  const double user_command_displacement = std::sqrt(
+      user_command_direction_.x * user_command_direction_.x +
+      user_command_direction_.y * user_command_direction_.y +
+      user_command_direction_.z * user_command_direction_.z
+  );
+  return user_command_displacement < kIdleDisplacementThreshold;
+}
+
 bool IntentInference::isNearAnyGoal() const {
   for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
     const geometry_msgs::Point goal_direction = this->getGoalDirection(recorded_object);
-    const double distance = std::sqrt(
+    const double goal_distance = std::sqrt(
         goal_direction.x * goal_direction.x +
         goal_direction.y * goal_direction.y +
         goal_direction.z * goal_direction.z
     );
-    if (distance < 0.03) {
-      // [distance threshold: 10cm]
+    if (goal_distance < kNearGoalDistanceThreshold) {
       return true;
     }
   }
@@ -285,11 +262,8 @@ bool IntentInference::isNearAnyGoal() const {
 bool IntentInference::isTowardAnyGoal() const {
   for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
     const geometry_msgs::Point goal_direction = this->getGoalDirection(recorded_object);
-    const double direction_similarity = getCosineSimilarity(gripper_direction_, goal_direction);
-    if (direction_similarity > 0.5) {
-      // [cosine similarity threshold: 60° (cos(60°) = 0.5)]
-      // `similarity > 0.5` means the angle between gripper direction and goal
-      //   direction is smaller than 60°
+    const double direction_similarity = this->getCosineSimilarity(user_command_direction_, goal_direction);
+    if (direction_similarity > kDirectionSimilarityThreshold) {
       return true;
     }
   }
@@ -335,17 +309,5 @@ void IntentInference::calculateConfidence() {
   } else {
     // no objects -> no confidence
     confidence_ = 0.0;
-  }
-}
-
-void IntentInference::calculateAlpha() {
-  if (confidence_ <= confidence_lower_bound_) {
-    alpha_ = 0.0;
-  } else if (confidence_ <= confidence_upper_bound_) {
-    // linear function from 0 to alpha_maximum_
-    alpha_ = alpha_maximum_ * (confidence_ - confidence_lower_bound_)
-        / (confidence_upper_bound_ - confidence_lower_bound_);
-  } else {
-    alpha_ = alpha_maximum_;
   }
 }
