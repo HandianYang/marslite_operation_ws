@@ -51,7 +51,7 @@ void SharedControl::initializePublishers() {
 
 void SharedControl::initializeSubscribers() {
   current_gripper_pose_subscriber_ = nh_.subscribe(
-      "/marslite_control/current_gripper_pose", 1,
+      "/marslite_control/gripper_pose", 1,
       &SharedControl::currentGripperPoseCallback, this
   );
   detected_objects_subscriber_ = nh_.subscribe(
@@ -61,6 +61,14 @@ void SharedControl::initializeSubscribers() {
   record_signal_subscriber_ = nh_.subscribe(
       "/marslite_control/record_signal", 1,
       &SharedControl::recordSignalCallback, this
+  );
+  position_safety_button_signal_subscriber_ = nh_.subscribe(
+      "/marslite_control/position_safety_button_signal", 1,
+      &SharedControl::positionSafetyButtonSignalCallback, this
+  );
+  orientation_safety_button_signal_subscriber_ = nh_.subscribe(
+      "/marslite_control/orientation_safety_button_signal", 1,
+      &SharedControl::orientationSafetyButtonSignalCallback, this
   );
   user_desired_gripper_pose_subscriber_ = nh_.subscribe(
       "/marslite_control/user_desired_gripper_pose", 1,
@@ -80,6 +88,7 @@ void SharedControl::publishIntentBeliefVisualization() {
 
 void SharedControl::publishBlendingGripperPose() {
   geometry_msgs::PoseStamped target_pose = this->getTargetPose();
+  if (target_pose.header.frame_id.empty())  return;
   desired_gripper_pose_publisher_.publish(target_pose);
 }
 
@@ -95,24 +104,31 @@ geometry_msgs::PoseStamped SharedControl::getTargetPose() {
   }
   is_locked_ = true;
     
-  geometry_msgs::Point most_likely_goal_position
-      = intent_inference_.getMostLikelyGoalPosition();
   geometry_msgs::PoseStamped target_pose;
   target_pose.header.frame_id = "base_link";
   target_pose.header.stamp = ros::Time::now();
-  target_pose.pose.position = most_likely_goal_position;
-  // TODO: orientation set to object orientation
-  target_pose.pose.orientation = current_gripper_pose_.pose.orientation;
+  target_pose.pose.position = this->getTargetPosition();
+  target_pose.pose.orientation = this->getTargetOrientation();
   return target_pose;
 }
 
-void SharedControl::currentGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
+geometry_msgs::Point SharedControl::getTargetPosition() const {
+  return intent_inference_.getMostLikelyGoalPosition();
+}
+
+geometry_msgs::Quaternion SharedControl::getTargetOrientation() {
+  // TODO: orientation set to object orientation
+  return current_gripper_pose_.pose.orientation;
+}
+
+void SharedControl::currentGripperPoseCallback(
+    const geometry_msgs::PoseStamped::ConstPtr& msg) {
   current_gripper_pose_ = *msg;
-  // TODO: consider synchronization issue (w/ userDesiredGripperPoseCallback)
   intent_inference_.setGripperPosition(current_gripper_pose_.pose.position);
 }
 
-void SharedControl::detectedObjectsCallback(const detection_msgs::DetectedObjectArray::ConstPtr& objects) {
+void SharedControl::detectedObjectsCallback(
+    const detection_msgs::DetectedObjectArray::ConstPtr& objects) {
   if (begin_recording_) {
     intent_inference_.setRecordedObjects(*objects);
     begin_recording_ = false;
@@ -120,19 +136,32 @@ void SharedControl::detectedObjectsCallback(const detection_msgs::DetectedObject
   }
 }
 
-void SharedControl::recordSignalCallback(const std_msgs::Bool::ConstPtr& signal) {
+void SharedControl::recordSignalCallback(
+    const std_msgs::Bool::ConstPtr& signal) {
   begin_recording_ = true;
+}
+
+void SharedControl::positionSafetyButtonSignalCallback(
+    const std_msgs::Bool::ConstPtr& signal) {
+  position_safety_button_signal_ = *signal;
+}
+
+void SharedControl::orientationSafetyButtonSignalCallback(
+    const std_msgs::Bool::ConstPtr& signal) {
+  orientation_safety_button_signal_ = *signal;
 }
 
 void SharedControl::userDesiredGripperPoseCallback(
     const geometry_msgs::PoseStamped::ConstPtr& msg) {
   user_desired_gripper_pose_ = *msg;
 
-  // TODO: improve direction estimation
-  // TODO: consider synchronization issue (w/ currentGripperPoseCallback)
-  controller_direction_estimator_.addwaypoint(user_desired_gripper_pose_.pose.position);
-  geometry_msgs::Point user_command_direction
-      = controller_direction_estimator_.getAveragedDirection();
+  geometry_msgs::Point user_command_direction;
+  if (position_safety_button_signal_.data) {
+    controller_direction_estimator_.addwaypoint(user_desired_gripper_pose_.pose.position);
+    user_command_direction = controller_direction_estimator_.getAveragedDirection();
+  } else {
+    controller_direction_estimator_.clear();
+  }
   intent_inference_.setUserCommandDirection(user_command_direction);
 }
 

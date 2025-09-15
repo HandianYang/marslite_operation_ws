@@ -7,8 +7,17 @@
 class ControllerDirectionEstimator {
 public:
   ControllerDirectionEstimator(const size_t& max_size = 20);
+
   void addwaypoint(const geometry_msgs::Point& point);
-  inline size_t getSize() const { return waypoint_buffer_.size(); }
+
+  inline void clear() {
+    waypoint_buffer_.clear();
+  }
+
+  inline size_t getSize() const {
+    return waypoint_buffer_.size();
+  }
+
   geometry_msgs::Point getAveragedDirection() const;
 
 private:

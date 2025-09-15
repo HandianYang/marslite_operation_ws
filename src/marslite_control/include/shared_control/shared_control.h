@@ -21,10 +21,14 @@ class SharedControl {
   void publishIntentBeliefVisualization();
   void publishBlendingGripperPose();
   geometry_msgs::PoseStamped getTargetPose();
+  geometry_msgs::Point getTargetPosition() const;
+  geometry_msgs::Quaternion getTargetOrientation();
 
   void currentGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
   void detectedObjectsCallback(const detection_msgs::DetectedObjectArray::ConstPtr& objects);
   void recordSignalCallback(const std_msgs::Bool::ConstPtr& signal);
+  void positionSafetyButtonSignalCallback(const std_msgs::Bool::ConstPtr& signal);
+  void orientationSafetyButtonSignalCallback(const std_msgs::Bool::ConstPtr& signal);
   void userDesiredGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& user_desired_gripper_pose);
   void userDesiredGripperStatusCallback(const std_msgs::Bool::ConstPtr& user_desired_gripper_status);
 
@@ -38,6 +42,8 @@ class SharedControl {
   ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber detected_objects_subscriber_;
   ros::Subscriber record_signal_subscriber_;
+  ros::Subscriber position_safety_button_signal_subscriber_;
+  ros::Subscriber orientation_safety_button_signal_subscriber_;
   ros::Subscriber user_desired_gripper_pose_subscriber_;
   ros::Subscriber user_desired_gripper_status_subscriber_;
 
@@ -49,6 +55,8 @@ class SharedControl {
   geometry_msgs::PoseStamped current_gripper_pose_;
   geometry_msgs::PoseStamped user_desired_gripper_pose_;
   std_msgs::Bool user_desired_gripper_status_;
+  std_msgs::Bool position_safety_button_signal_;
+  std_msgs::Bool orientation_safety_button_signal_;
 
   // flags
   bool begin_recording_;  // true if record_siganl is received

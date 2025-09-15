@@ -9,6 +9,7 @@
 #include <std_msgs/Bool.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
+#include <mutex>
 
 #include "cartesian_control/kinematics_constants.h"
 #include "utils/rpy.h"
@@ -55,20 +56,30 @@ class MotionControllerTeleoperation {
   void parseParameters();
   void initializePublishers();
   void initializeSubscribers();
-  
-  inline const bool isAnySafetyButtonPressed() const {
-    return is_position_change_enabled_ || is_orientation_change_enabled_;
+
+  inline void initializeGripperPose() {
+    initial_gripper_pose_ = desired_gripper_pose_ = current_gripper_pose_;
   }
 
   inline void initializeLeftControllerPose() {
     initial_left_controller_pose_ = current_left_controller_pose_;
   }
 
-  inline void initializeGripperPose() {
-    initial_gripper_pose_ = desired_gripper_pose_ = current_gripper_pose_;
+  const bool targetPoseIsReached(const geometry_msgs::PoseStamped& target_pose) const;
+
+  inline const bool isAnySafetyButtonPressed() const {
+    return is_position_change_enabled_ || is_orientation_change_enabled_;
   }
 
   void calculateDesiredGripperPose();
+  void calculateDesiredGripperPosition();
+  geometry_msgs::Vector3 getPositionDifference();
+  geometry_msgs::Vector3 scalePositionDifference(const geometry_msgs::Vector3& position_difference);
+  void applyPositionDifference(const geometry_msgs::Vector3& scaled_position_difference);
+  void calculateDesiredGripperOrientation();
+  RPY getOrientationDifference();
+  RPY scaleOrientationDifference(const RPY& orientation_difference);
+  void applyOrientationDifference(const RPY& scaled_orientation_difference);
 
   inline void resetPositionalMovement() {
     desired_gripper_pose_.pose.position = current_gripper_pose_.pose.position;
@@ -86,18 +97,6 @@ class MotionControllerTeleoperation {
     mobile_platform_velocity_publisher_.publish(mobile_platform_velocity_);
   }
 
-  const bool targetPoseIsReached(const geometry_msgs::PoseStamped& target_pose) const;
-
-  void calculateDesiredGripperPosition();
-  geometry_msgs::Vector3 getPositionDifference();
-  geometry_msgs::Vector3 scalePositionDifference(const geometry_msgs::Vector3& position_difference);
-  void applyPositionDifference(const geometry_msgs::Vector3& scaled_position_difference);
-
-  void calculateDesiredGripperOrientation();
-  RPY getOrientationDifference();
-  RPY scaleOrientationDifference(const RPY& orientation_difference);
-  void applyOrientationDifference(const RPY& scaled_orientation_difference);
-
   RPY getRPYFromPose(const geometry_msgs::PoseStamped& pose);
   double restrictAngleWithinPI(const double& angle);
 
@@ -114,6 +113,8 @@ class MotionControllerTeleoperation {
   ros::Publisher gripper_pose_publisher_; // for pure teleoperation & shared control
   ros::Publisher gripper_status_publisher_;
   ros::Publisher record_signal_publisher_;
+  ros::Publisher position_safety_button_signal_publisher_;
+  ros::Publisher orientation_safety_button_signal_publisher_;
   ros::Publisher mobile_platform_velocity_publisher_;
   ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber left_controller_pose_subscriber_;
@@ -129,6 +130,8 @@ class MotionControllerTeleoperation {
   geometry_msgs::Twist mobile_platform_velocity_;
   std_msgs::Bool desired_gripper_status_;
   std_msgs::Bool record_signal_;
+  std_msgs::Bool position_safety_button_signal_;
+  std_msgs::Bool orientation_safety_button_signal_;
 
   // flags
   bool is_begin_teleoperation_;  // true if teleoperation has not started yet
@@ -142,6 +145,8 @@ class MotionControllerTeleoperation {
   double linear_velocity_scale_;
   double angular_velocity_scale_;
   bool use_shared_controller_;  // false if using pure teleoperation
+
+  std::mutex mutex_;
 };
 
 #endif // #ifndef MARSLITE_CONTROL_CARTESIAN_CONTROL_MOTION_CONTROLLER_TELEOPERATION_H
