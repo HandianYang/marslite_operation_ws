@@ -7,18 +7,17 @@
 #include <geometry_msgs/Twist.h>
 #include <sensor_msgs/Joy.h>
 #include <std_msgs/Bool.h>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2/LinearMath/Matrix3x3.h>
 #include <mutex>
 
 #include "cartesian_control/kinematics_constants.h"
 #include "utils/rpy.h"
 #include "utils/tf2_listener_wrapper.h"
+#include "utils/velocity_estimator.h"
 
-enum GripperDirection {
-  FRONT=0,
-  LEFT=1,
-  RIGHT=2
+enum RobotOperatingDirection {
+  FRONT,
+  LEFT,
+  RIGHT
 };
 
 const double kTriggerThreshold = 0.95;
@@ -31,23 +30,24 @@ class MotionControllerTeleoperation {
 
   inline void resetToFrontPose() {
     this->teleoperateToPose(kFrontInitialGripperPose);
-    this->setGripperDirection(GripperDirection::FRONT);
+    this->setRobotOperatingDirection(RobotOperatingDirection::FRONT);
   }
 
   inline void resetToLeftPose() {
     this->teleoperateToPose(kLeftInitialGripperPose);
-    this->setGripperDirection(GripperDirection::LEFT);
+    this->setRobotOperatingDirection(RobotOperatingDirection::LEFT);
   }
 
   inline void resetToRightPose() {
     this->teleoperateToPose(kRightInitialGripperPose);
-    this->setGripperDirection(GripperDirection::RIGHT);
+    this->setRobotOperatingDirection(RobotOperatingDirection::RIGHT);
   }
 
   void teleoperateToPose(const geometry_msgs::PoseStamped& target_pose);
 
-  inline void setGripperDirection(const GripperDirection& direction = GripperDirection::FRONT) {
-    gripper_direction_ = direction;
+  inline void setRobotOperatingDirection(
+      const RobotOperatingDirection& direction = RobotOperatingDirection::FRONT) {
+    robot_operating_direction_ = direction;
   }
 
   void run();
@@ -58,7 +58,9 @@ class MotionControllerTeleoperation {
   void initializeSubscribers();
 
   inline void initializeGripperPose() {
-    initial_gripper_pose_ = desired_gripper_pose_ = current_gripper_pose_;
+    this->resetPositionalMovement();
+    this->resetOrientationalMovement();
+    initial_gripper_pose_ = desired_gripper_pose_;
   }
 
   inline void initializeLeftControllerPose() {
@@ -81,8 +83,23 @@ class MotionControllerTeleoperation {
   RPY scaleOrientationDifference(const RPY& orientation_difference);
   void applyOrientationDifference(const RPY& scaled_orientation_difference);
 
+  void calculateUserCommandVelocity();
+
   inline void resetPositionalMovement() {
-    desired_gripper_pose_.pose.position = current_gripper_pose_.pose.position;
+    // Shift a little to avoid immediate stop
+    // TODO: Consider end-effector velocity; Replace previous_gripper_pose_
+    geometry_msgs::Point gripper_direction;
+    gripper_direction.x = current_gripper_pose_.pose.position.x - previous_gripper_pose_.pose.position.x;
+    gripper_direction.y = current_gripper_pose_.pose.position.y - previous_gripper_pose_.pose.position.y;
+    gripper_direction.z = current_gripper_pose_.pose.position.z - previous_gripper_pose_.pose.position.z;
+    
+    desired_gripper_pose_.pose.position.x = current_gripper_pose_.pose.position.x + gripper_direction.x * 2;
+    desired_gripper_pose_.pose.position.y = current_gripper_pose_.pose.position.y + gripper_direction.y * 2;
+    desired_gripper_pose_.pose.position.z = current_gripper_pose_.pose.position.z + gripper_direction.z * 2;
+
+    // reset velocity
+    user_command_velocity_estimator_.clear();
+    user_command_velocity_ = geometry_msgs::Vector3();
   }
 
   inline void resetOrientationalMovement() {
@@ -93,18 +110,27 @@ class MotionControllerTeleoperation {
     gripper_pose_publisher_.publish(desired_gripper_pose_);
   }
 
+  inline void publishUserCommandVelocity() {
+    user_command_velocity_publisher_.publish(user_command_velocity_);
+  }
+
+  void publishUserCommandVelocityMarker();
+
   inline void publishMobilePlatformVelocity() {
     mobile_platform_velocity_publisher_.publish(mobile_platform_velocity_);
   }
-
-  RPY getRPYFromPose(const geometry_msgs::PoseStamped& pose);
-  double restrictAngleWithinPI(const double& angle);
 
   void currentGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
   void leftControllerPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
   void leftControllerJoyCallback(const sensor_msgs::Joy::ConstPtr& msg);
   void toggleGripperStatus();
   void resetPoseSignalCallback(const std_msgs::Bool::ConstPtr& msg);
+
+  static inline double restrictAngleWithinPI(const double& angle) {
+    if (angle > M_PI) return angle - 2 * M_PI;
+    if (angle < -M_PI) return angle + 2 * M_PI;
+    return angle;
+  }
 
   // ROS mechanisms
   ros::NodeHandle nh_;
@@ -116,6 +142,10 @@ class MotionControllerTeleoperation {
   ros::Publisher position_safety_button_signal_publisher_;
   ros::Publisher orientation_safety_button_signal_publisher_;
   ros::Publisher mobile_platform_velocity_publisher_;
+
+  ros::Publisher user_command_velocity_publisher_;
+  ros::Publisher user_command_velocity_marker_publisher_;
+  
   ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber left_controller_pose_subscriber_;
   ros::Subscriber left_controller_joy_subscriber_;
@@ -125,8 +155,12 @@ class MotionControllerTeleoperation {
   geometry_msgs::PoseStamped initial_left_controller_pose_;
   geometry_msgs::PoseStamped current_left_controller_pose_;
   geometry_msgs::PoseStamped initial_gripper_pose_;
-  geometry_msgs::PoseStamped current_gripper_pose_; // updated by lookupCurrentGripperPose()
+  // updated by lookupCurrentGripperPose()
+  geometry_msgs::PoseStamped current_gripper_pose_;
+  // the previous value of current_gripper_pose_
+  geometry_msgs::PoseStamped previous_gripper_pose_;
   geometry_msgs::PoseStamped desired_gripper_pose_;
+  geometry_msgs::Vector3 user_command_velocity_;
   geometry_msgs::Twist mobile_platform_velocity_;
   std_msgs::Bool desired_gripper_status_;
   std_msgs::Bool record_signal_;
@@ -137,16 +171,17 @@ class MotionControllerTeleoperation {
   bool is_begin_teleoperation_;  // true if teleoperation has not started yet
   bool is_position_change_enabled_;
   bool is_orientation_change_enabled_;
-  GripperDirection gripper_direction_;
+  bool use_shared_controller_;  // false if using pure teleoperation
 
   // parameters
   double position_scale_;
   double orientation_scale_;
   double linear_velocity_scale_;
   double angular_velocity_scale_;
-  bool use_shared_controller_;  // false if using pure teleoperation
 
   std::mutex mutex_;
+  RobotOperatingDirection robot_operating_direction_;
+  VelocityEstimator user_command_velocity_estimator_;
 };
 
 #endif // #ifndef MARSLITE_CONTROL_CARTESIAN_CONTROL_MOTION_CONTROLLER_TELEOPERATION_H

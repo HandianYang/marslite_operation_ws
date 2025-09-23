@@ -1,4 +1,7 @@
 #include "cartesian_control/motion_controller_teleoperation.h"
+#include <tf2/LinearMath/Vector3.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <visualization_msgs/Marker.h>
 #include <Eigen/Dense>
 #include <cmath>
 
@@ -12,6 +15,8 @@ MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHand
   this->parseParameters();
   this->initializePublishers();
   this->initializeSubscribers();
+  user_command_velocity_estimator_.setBufferSize(10);
+  user_command_velocity_estimator_.setMinVelocity(1e-3);
 }
 
 /******************************************************
@@ -29,6 +34,7 @@ void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseS
     ros::spinOnce();
   }
   ROS_INFO("Reached the target pose. You can start teleoperation by calling run() now!");
+  previous_gripper_pose_ = current_gripper_pose_ = target_pose;
 }
 
 void MotionControllerTeleoperation::run() {
@@ -39,11 +45,14 @@ void MotionControllerTeleoperation::run() {
       std::lock_guard<std::mutex> lock(mutex_);
       if (this->isAnySafetyButtonPressed()) {
         this->calculateDesiredGripperPose();
+        this->calculateUserCommandVelocity();
       } else {
         this->initializeGripperPose();
         this->initializeLeftControllerPose();
       }
       this->publishDesiredGripperPose();
+      this->publishUserCommandVelocity();
+      this->publishUserCommandVelocityMarker();
     } // end mutex scope
     this->publishMobilePlatformVelocity();
 
@@ -95,6 +104,10 @@ void MotionControllerTeleoperation::initializePublishers() {
       "/mob_plat/cmd_vel", 1);
   record_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
       "/marslite_control/record_signal", 1);
+  user_command_velocity_publisher_ = nh_.advertise<geometry_msgs::Vector3>(
+      "/marslite_control/user_command_velocity", 1);
+  user_command_velocity_marker_publisher_ = nh_.advertise<visualization_msgs::Marker>(
+      "/marslite_control/user_command_velocity_marker", 1);
 }
 
 void MotionControllerTeleoperation::initializeSubscribers() {
@@ -117,6 +130,7 @@ void MotionControllerTeleoperation::initializeSubscribers() {
 }
 
 void MotionControllerTeleoperation::calculateDesiredGripperPose() {
+  desired_gripper_pose_.header.stamp = ros::Time::now();
   if (is_position_change_enabled_) {
     this->calculateDesiredGripperPosition();
   } else {
@@ -185,8 +199,8 @@ geometry_msgs::Vector3 MotionControllerTeleoperation::scalePositionDifference(
 
 void MotionControllerTeleoperation::applyPositionDifference(
     const geometry_msgs::Vector3& scaled_position_difference) {
-  switch (gripper_direction_) {
-    case GripperDirection::FRONT:
+  switch (robot_operating_direction_) {
+    case RobotOperatingDirection::FRONT:
       // | controller |   gripper  |
       // |------------|------------|
       // | front/back | front/back |
@@ -196,7 +210,7 @@ void MotionControllerTeleoperation::applyPositionDifference(
       desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.y;
       desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
       break;
-    case GripperDirection::LEFT:
+    case RobotOperatingDirection::LEFT:
       // | controller |   gripper  |
       // |------------|------------|
       // | front/back | left/right |
@@ -206,7 +220,7 @@ void MotionControllerTeleoperation::applyPositionDifference(
       desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.x;
       desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
       break;
-    case GripperDirection::RIGHT:
+    case RobotOperatingDirection::RIGHT:
       // | controller |   gripper  |
       // |------------|------------|
       // | front/back | right/left |
@@ -227,8 +241,11 @@ void MotionControllerTeleoperation::calculateDesiredGripperOrientation() {
 }
 
 RPY MotionControllerTeleoperation::getOrientationDifference() {
-  RPY initial_left_controller_rpy = getRPYFromPose(initial_left_controller_pose_);
-  RPY current_left_controller_rpy = getRPYFromPose(current_left_controller_pose_);
+  RPY initial_left_controller_rpy;
+  initial_left_controller_rpy.convertFromPoseStamped(initial_left_controller_pose_);
+  RPY current_left_controller_rpy;
+  current_left_controller_rpy.convertFromPoseStamped(current_left_controller_pose_);
+
   RPY orientation_difference = {
       this->restrictAngleWithinPI(current_left_controller_rpy.roll - initial_left_controller_rpy.roll),
       this->restrictAngleWithinPI(current_left_controller_rpy.pitch - initial_left_controller_rpy.pitch),
@@ -263,56 +280,94 @@ void MotionControllerTeleoperation::applyOrientationDifference(const RPY& scaled
   // transformed_orientation_difference.pitch = -scaled_orientation_difference.roll;
   transformed_orientation_difference.yaw = scaled_orientation_difference.yaw;
 
-  RPY initial_gripper_rpy = getRPYFromPose(initial_gripper_pose_);
+  RPY initial_gripper_rpy;
+  initial_gripper_rpy.convertFromPoseStamped(initial_gripper_pose_);
   RPY target_gripper_rpy = {
     this->restrictAngleWithinPI(initial_gripper_rpy.roll + transformed_orientation_difference.roll),
     this->restrictAngleWithinPI(initial_gripper_rpy.pitch + transformed_orientation_difference.pitch),
     this->restrictAngleWithinPI(initial_gripper_rpy.yaw + transformed_orientation_difference.yaw)
   };
-  tf2::Quaternion target_gripper_quaternion;
-  target_gripper_quaternion.setRPY(
-      target_gripper_rpy.roll,
-      target_gripper_rpy.pitch,
-      target_gripper_rpy.yaw
-  );
-  target_gripper_quaternion.normalize();
-  desired_gripper_pose_.pose.orientation.x = target_gripper_quaternion.x();
-  desired_gripper_pose_.pose.orientation.y = target_gripper_quaternion.y();
-  desired_gripper_pose_.pose.orientation.z = target_gripper_quaternion.z();
-  desired_gripper_pose_.pose.orientation.w = target_gripper_quaternion.w();
+  desired_gripper_pose_.pose.orientation = target_gripper_rpy.convertToQuaternion();
 }
 
-RPY MotionControllerTeleoperation::getRPYFromPose(const geometry_msgs::PoseStamped& pose) {
-  RPY rpy;
-  const double x = pose.pose.orientation.x;
-  const double y = pose.pose.orientation.y;
-  const double z = pose.pose.orientation.z;
-  const double w = pose.pose.orientation.w;
+void MotionControllerTeleoperation::calculateUserCommandVelocity() {
+  geometry_msgs::PointStamped waypoint;
+  waypoint.header = desired_gripper_pose_.header;
+  waypoint.point = desired_gripper_pose_.pose.position;
+  user_command_velocity_estimator_.addWaypoint(waypoint);
+  user_command_velocity_estimator_.estimateVelocity();
+  user_command_velocity_ = user_command_velocity_estimator_.getEstimatedVelocity();
+}
 
-  tf2::Quaternion q(x, y, z, w);
-  if (q.length2() == 0.0) {
-    ROS_ERROR("Invalid quaternion with zero length encountered in getRPYFromPose.");
-    rpy.roll = rpy.pitch = rpy.yaw = 0.0;
-    return rpy;
+void MotionControllerTeleoperation::publishUserCommandVelocityMarker() {
+  visualization_msgs::Marker marker;
+  marker.header.frame_id = "base_link";
+  marker.header.stamp = ros::Time::now();
+  marker.ns = "user_command_direction";
+  marker.id = 0;
+  marker.type = visualization_msgs::Marker::ARROW;
+
+  const tf2::Vector3 user_command_velocity_tf2(
+      user_command_velocity_.x,
+      user_command_velocity_.y,
+      user_command_velocity_.z
+  );
+  const double user_command_displacement = user_command_velocity_tf2.length();
+  if (user_command_displacement < 1e-3) {
+    marker.action = visualization_msgs::Marker::DELETE;
+    user_command_velocity_marker_publisher_.publish(marker);
+    return;
+  }
+  tf2::Vector3 user_command_velocity_normalized = 
+      user_command_velocity_tf2 / user_command_displacement;
+
+  // Build orientation: rotate +X axis to user_command_velocity_normalized
+  const tf2::Vector3 x_axis(1.0, 0.0, 0.0);
+  double dot = x_axis.dot(user_command_velocity_normalized);
+  if (dot > 1.0) dot = 1.0;
+  if (dot < -1.0) dot = -1.0;
+
+  tf2::Quaternion q;
+  if (dot > 1.0 - 1e-9) {
+    // Aligned with same direction: no rotation
+    q.setValue(0, 0, 0, 1);
+  } else if (dot < -1.0 + 1e-9) {
+    // Aligned with opposite direction: rotate 180° around any axis orthogonal to X.
+    //   Here, we choose Z axis
+    q.setValue(0, 0, 1, 0);
+  } else {
+    tf2::Vector3 axis = x_axis.cross(user_command_velocity_normalized);
+    axis.normalize();
+    const double angle = std::acos(dot);
+    q.setRotation(axis, angle);
   }
 
-  q.normalize();
-  tf2::Matrix3x3 m(q);
-  m.getRPY(rpy.roll, rpy.pitch, rpy.yaw);
+  marker.action = visualization_msgs::Marker::ADD;
+  marker.pose.position = desired_gripper_pose_.pose.position;
+  marker.pose.orientation.x = q.x();
+  marker.pose.orientation.y = q.y();
+  marker.pose.orientation.z = q.z();
+  marker.pose.orientation.w = q.w();
 
-  return rpy;
-}
+  // Arrow size: scale.x = shaft length; y/z = diameters; head length auto-scales with y/z
+  // We'll split the total length: shaft + head
+  const double head_length_ratio = 0.1;  // head length = 10% of total length
+  const double head_length = std::max(0.001, head_length_ratio * user_command_displacement);
+  const double shaft_length = std::max(0.0, user_command_displacement - head_length);
+  marker.scale.x = shaft_length;
+  marker.scale.y = 0.01;  // shaft diameter
+  marker.scale.z = 0.01;  // head diameter
+  marker.color.r = 0.1f;
+  marker.color.g = 0.7f;
+  marker.color.b = 1.0f;
+  marker.color.a = 1.0f;
 
-double MotionControllerTeleoperation::restrictAngleWithinPI(const double& angle) {
-  if (angle > M_PI)
-    return angle - 2 * M_PI;
-  else if (angle < -M_PI)
-    return angle + 2 * M_PI;
-  return angle;
+  user_command_velocity_marker_publisher_.publish(marker);
 }
 
 void MotionControllerTeleoperation::currentGripperPoseCallback(
     const geometry_msgs::PoseStamped::ConstPtr& msg) {
+  previous_gripper_pose_ = current_gripper_pose_;
   current_gripper_pose_ = *msg;
 }
 

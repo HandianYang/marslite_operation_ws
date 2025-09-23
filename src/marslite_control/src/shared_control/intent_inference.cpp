@@ -11,7 +11,9 @@
 IntentInference::IntentInference(const double& transition_probability,
                                  const double& confidence_lower_bound,
                                  const double& confidence_upper_bound)
-    : gripper_motion_state_(GripperMotionState::IDLE), confidence_(0.0), 
+    : gripper_motion_state_(GripperMotionState::IDLE),
+      last_gripper_motion_state_(GripperMotionState::IDLE),
+      confidence_(0.0), 
       transition_probability_(transition_probability),
       confidence_lower_bound_(confidence_lower_bound),
       confidence_upper_bound_(confidence_upper_bound) {
@@ -92,18 +94,17 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
   gripper_marker.color.a = 0.2;
 
   switch (gripper_motion_state_) {
+    case GripperMotionState::LOCKED:
+      // green
+      gripper_marker.color.r = 0.0;
+      gripper_marker.color.g = 1.0;
+      gripper_marker.color.b = 0.0;
+    break;
     case GripperMotionState::APPROACHING:
-      if (this->isNotLocked()) {
-        // APPROACHING but not locked yet -> light green
-        gripper_marker.color.r = 0.5;
-        gripper_marker.color.g = 1.0;
-        gripper_marker.color.b = 0.5;
-      } else {
-        // APPROACHING and locked -> green
-        gripper_marker.color.r = 0.0;
-        gripper_marker.color.g = 1.0;
-        gripper_marker.color.b = 0.0;
-      }
+      // light green
+      gripper_marker.color.r = 0.6;
+      gripper_marker.color.g = 1.0;
+      gripper_marker.color.b = 0.6;
     break;
     case GripperMotionState::RETREATING:
       // red
@@ -111,13 +112,13 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
       gripper_marker.color.g = 0.0;
       gripper_marker.color.b = 0.0;
     break;
-    case GripperMotionState::NEAR_GOAL:
+    case GripperMotionState::REACHED:
       // yellow
       gripper_marker.color.r = 1.0;
       gripper_marker.color.g = 1.0;
       gripper_marker.color.b = 0.0;
     break;
-    case GripperMotionState::GRASPING:
+    case GripperMotionState::GRASPED:
       // blue
       gripper_marker.color.r = 0.0;
       gripper_marker.color.g = 0.0;
@@ -136,8 +137,8 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
   return marker_array;
 }
 
-geometry_msgs::Point IntentInference::getGoalDirection(const detection_msgs::DetectedObject& goal) const { 
-  geometry_msgs::Point goal_direction;
+geometry_msgs::Vector3 IntentInference::getGoalDirection(const detection_msgs::DetectedObject& goal) const { 
+  geometry_msgs::Vector3 goal_direction;
   goal_direction.x = position_to_base_link_.at(goal).x - gripper_position_.x;
   goal_direction.y = position_to_base_link_.at(goal).y - gripper_position_.y;
   goal_direction.z = position_to_base_link_.at(goal).z - gripper_position_.z;
@@ -149,8 +150,9 @@ void IntentInference::updateBelief() {
   this->updateGripperMotionState();
 
   if (gripper_motion_state_ == GripperMotionState::IDLE
-      || gripper_motion_state_ == GripperMotionState::GRASPING
-      || gripper_motion_state_ == GripperMotionState::NEAR_GOAL) {
+      || gripper_motion_state_ == GripperMotionState::GRASPED
+      || gripper_motion_state_ == GripperMotionState::REACHED
+      || gripper_motion_state_ == GripperMotionState::LOCKED) {
     return;
   }
 
@@ -165,10 +167,10 @@ void IntentInference::updateBelief() {
   // -> Update belief using Bayesian inference with Markov transition model
   detection_msgs::ObjectBeliefMap new_belief;
   for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
-    geometry_msgs::Point goal_direction = this->getGoalDirection(recorded_object);
+    geometry_msgs::Vector3 goal_direction = this->getGoalDirection(recorded_object);
 
     // (1) direction_likelihood
-    const double direction_similarity = getCosineSimilarity(user_command_direction_, goal_direction);
+    const double direction_similarity = getCosineSimilarity(user_command_velocity_, goal_direction);
     const double direction_likelihood = (direction_similarity + 1) / 2;  // [-1, 1] -> [0, 1]
 
     // (2) proximity likelihood
@@ -222,37 +224,53 @@ geometry_msgs::Point IntentInference::transformOdomToBaseLink(const geometry_msg
 }
 
 void IntentInference::updateGripperMotionState() {
-  if (gripper_status_.data) {
-    gripper_motion_state_ = GripperMotionState::GRASPING;
-  } else if (recorded_objects_.objects.empty() || this->isUserCommandIdle()) {
+  last_gripper_motion_state_ = gripper_motion_state_;
+  if (!is_positional_safety_button_pressed_ || recorded_objects_.objects.empty()) {
     gripper_motion_state_ = GripperMotionState::IDLE;
-  } else if (this->isNearAnyGoal()) {
-    gripper_motion_state_ = GripperMotionState::NEAR_GOAL;
-  }  else if (this->isTowardAnyGoal()) {
-    gripper_motion_state_ = GripperMotionState::APPROACHING;
-  } else {
+  } else if (this->isUserCommandIdle()) {
+    if (last_gripper_motion_state_ == GripperMotionState::LOCKED) {
+      // remain LOCKED even if user command is idle
+      gripper_motion_state_ = GripperMotionState::LOCKED;
+    } else {
+      gripper_motion_state_ = GripperMotionState::IDLE;
+    }
+  } else if (gripper_status_.data) {
+    gripper_motion_state_ = GripperMotionState::GRASPED;
+  } else if (this->isAnyGoalReached()) {
+    gripper_motion_state_ = GripperMotionState::REACHED;
+  } else if (!this->isTowardAnyGoal()) {
     gripper_motion_state_ = GripperMotionState::RETREATING;
+  } else {
+    // Convert to LOCKED if ...
+    // (1) already LOCKED;
+    // (2) already APPROACHING and confidence is high enough.
+    gripper_motion_state_ = GripperMotionState::APPROACHING;
+    if (last_gripper_motion_state_ == GripperMotionState::LOCKED || 
+        last_gripper_motion_state_ == GripperMotionState::APPROACHING && 
+        confidence_ >= kLockTargetConfidenceThreshold) {
+      gripper_motion_state_ = GripperMotionState::LOCKED;
+    }
   }
 }
 
 bool IntentInference::isUserCommandIdle() const {
   const double user_command_displacement = std::sqrt(
-      user_command_direction_.x * user_command_direction_.x +
-      user_command_direction_.y * user_command_direction_.y +
-      user_command_direction_.z * user_command_direction_.z
+      user_command_velocity_.x * user_command_velocity_.x +
+      user_command_velocity_.y * user_command_velocity_.y +
+      user_command_velocity_.z * user_command_velocity_.z
   );
   return user_command_displacement < kIdleDisplacementThreshold;
 }
 
-bool IntentInference::isNearAnyGoal() const {
+bool IntentInference::isAnyGoalReached() const {
   for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
-    const geometry_msgs::Point goal_direction = this->getGoalDirection(recorded_object);
+    const geometry_msgs::Vector3 goal_direction = this->getGoalDirection(recorded_object);
     const double goal_distance = std::sqrt(
         goal_direction.x * goal_direction.x +
         goal_direction.y * goal_direction.y +
         goal_direction.z * goal_direction.z
     );
-    if (goal_distance < kNearGoalDistanceThreshold) {
+    if (goal_distance < kReachedDistanceThreshold) {
       return true;
     }
   }
@@ -261,8 +279,8 @@ bool IntentInference::isNearAnyGoal() const {
 
 bool IntentInference::isTowardAnyGoal() const {
   for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
-    const geometry_msgs::Point goal_direction = this->getGoalDirection(recorded_object);
-    const double direction_similarity = this->getCosineSimilarity(user_command_direction_, goal_direction);
+    const geometry_msgs::Vector3 goal_direction = this->getGoalDirection(recorded_object);
+    const double direction_similarity = this->getCosineSimilarity(user_command_velocity_, goal_direction);
     if (direction_similarity > kDirectionSimilarityThreshold) {
       return true;
     }
@@ -271,8 +289,8 @@ bool IntentInference::isTowardAnyGoal() const {
 }
 
 double IntentInference::getCosineSimilarity(
-    const geometry_msgs::Point& user_direction,
-    const geometry_msgs::Point& goal_direction) const {
+    const geometry_msgs::Vector3& user_direction,
+    const geometry_msgs::Vector3& goal_direction) const {
   const double dot = user_direction.x * goal_direction.x
       + user_direction.y * goal_direction.y
       + user_direction.z * goal_direction.z;

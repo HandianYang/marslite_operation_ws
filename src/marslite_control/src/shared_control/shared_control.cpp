@@ -13,6 +13,8 @@ SharedControl::SharedControl(const ros::NodeHandle& nh)
       intent_inference_(0.1) {
   this->initializePublishers();
   this->initializeSubscribers();
+  velocity_estimator_.setBufferSize(15);
+  velocity_estimator_.setMinVelocity(0.001);
 }
 
 /******************************************************
@@ -47,6 +49,9 @@ void SharedControl::initializePublishers() {
   reset_pose_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
       "/marslite_control/lock_state_signal", 1
   );
+  user_command_direction_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
+      "marslite_control/user_command_direction", 1
+  );
 }
 
 void SharedControl::initializeSubscribers() {
@@ -78,6 +83,10 @@ void SharedControl::initializeSubscribers() {
       "/marslite_control/user_desired_gripper_status", 1,
       &SharedControl::userDesiredGripperStatusCallback, this
   );
+  user_command_velocity_subscriber_ = nh_.subscribe(
+      "/marslite_control/user_command_velocity", 1,
+      &SharedControl::userCommandVelocityCallback, this
+  );
 }
 
 void SharedControl::publishIntentBeliefVisualization() {
@@ -93,32 +102,61 @@ void SharedControl::publishBlendingGripperPose() {
 }
 
 geometry_msgs::PoseStamped SharedControl::getTargetPose() {
-  if (intent_inference_.isNotLocked()) {
-    if (is_locked_) {
-      // LOCK to UNLOCK transition
-      std_msgs::Bool reset_pose_signal_;
-      reset_pose_signal_publisher_.publish(reset_pose_signal_);
-    }
-    is_locked_ = false;
-    return user_desired_gripper_pose_;
-  }
-  is_locked_ = true;
+  if (intent_inference_.isLocked()) {
+    is_previously_locked_ = true;
     
-  geometry_msgs::PoseStamped target_pose;
-  target_pose.header.frame_id = "base_link";
-  target_pose.header.stamp = ros::Time::now();
-  target_pose.pose.position = this->getTargetPosition();
-  target_pose.pose.orientation = this->getTargetOrientation();
-  return target_pose;
+    geometry_msgs::PoseStamped target_pose;
+    target_pose.header.frame_id = "base_link";
+    target_pose.header.stamp = ros::Time::now();
+    target_pose.pose.position = this->getTargetPosition();
+    target_pose.pose.orientation = this->getTargetOrientation();
+    return target_pose;
+  }
+
+  if (is_previously_locked_) {
+    // LOCK to UNLOCK transition
+    std_msgs::Bool reset_pose_signal_;
+    reset_pose_signal_publisher_.publish(reset_pose_signal_);
+  }
+  is_previously_locked_ = false;
+  return user_desired_gripper_pose_;
 }
 
-geometry_msgs::Point SharedControl::getTargetPosition() const {
-  return intent_inference_.getMostLikelyGoalPosition();
+geometry_msgs::Point SharedControl::getTargetPosition() {
+  // TODO: shift the position ahead kReachedDistanceThreshold
+  geometry_msgs::Point target_position = intent_inference_.getMostLikelyGoalPosition();
+  geometry_msgs::Vector3 target_direction;
+  target_direction.x = target_position.x - current_gripper_pose_.pose.position.x;
+  target_direction.y = target_position.y - current_gripper_pose_.pose.position.y;
+  target_direction.z = target_position.z - current_gripper_pose_.pose.position.z;
+  const double target_displacement = std::sqrt(
+    target_direction.x * target_direction.x + 
+    target_direction.y * target_direction.y +
+    target_direction.z * target_direction.z
+  );
+  geometry_msgs::Vector3 scaled_target_direction;
+  scaled_target_direction.x = target_direction.x / target_displacement * 0.028;
+  scaled_target_direction.y = target_direction.y / target_displacement * 0.028;
+  scaled_target_direction.z = target_direction.z / target_displacement * 0.028;
+
+  target_position.x -= scaled_target_direction.x;
+  target_position.y -= scaled_target_direction.y;
+  target_position.z -= scaled_target_direction.z;
+  return target_position;
 }
 
 geometry_msgs::Quaternion SharedControl::getTargetOrientation() {
-  // TODO: orientation set to object orientation
-  return current_gripper_pose_.pose.orientation;
+  geometry_msgs::Point target_position = intent_inference_.getMostLikelyGoalPosition();
+  geometry_msgs::Vector3 target_direction;
+  target_direction.x = target_position.x - current_gripper_pose_.pose.position.x;
+  target_direction.y = target_position.y - current_gripper_pose_.pose.position.y;
+  target_direction.z = target_position.z - current_gripper_pose_.pose.position.z;
+
+  RPY target_orientation;
+  target_orientation.roll = M_PI / 2;
+  target_orientation.pitch = 0;
+  target_orientation.yaw = M_PI / 2 + std::atan2(target_direction.y, target_direction.x);
+  return target_orientation.convertToQuaternion();
 }
 
 void SharedControl::currentGripperPoseCallback(
@@ -144,6 +182,7 @@ void SharedControl::recordSignalCallback(
 void SharedControl::positionSafetyButtonSignalCallback(
     const std_msgs::Bool::ConstPtr& signal) {
   position_safety_button_signal_ = *signal;
+  intent_inference_.setSafetyButtonStatus(signal->data);
 }
 
 void SharedControl::orientationSafetyButtonSignalCallback(
@@ -154,15 +193,6 @@ void SharedControl::orientationSafetyButtonSignalCallback(
 void SharedControl::userDesiredGripperPoseCallback(
     const geometry_msgs::PoseStamped::ConstPtr& msg) {
   user_desired_gripper_pose_ = *msg;
-
-  geometry_msgs::Point user_command_direction;
-  if (position_safety_button_signal_.data) {
-    controller_direction_estimator_.addwaypoint(user_desired_gripper_pose_.pose.position);
-    user_command_direction = controller_direction_estimator_.getAveragedDirection();
-  } else {
-    controller_direction_estimator_.clear();
-  }
-  intent_inference_.setUserCommandDirection(user_command_direction);
 }
 
 void SharedControl::userDesiredGripperStatusCallback(
@@ -170,5 +200,10 @@ void SharedControl::userDesiredGripperStatusCallback(
   intent_inference_.setGripperStatus(*user_desired_gripper_status);
   // Directly publish the user's desired gripper status becuase we don't 
   //   need to process it through shared control.
-  desired_gripper_status_publisher_.publish(*user_desired_gripper_status);  
+  desired_gripper_status_publisher_.publish(*user_desired_gripper_status);
+}
+
+void SharedControl::userCommandVelocityCallback(
+    const geometry_msgs::Vector3::ConstPtr& user_command_velocity) {
+  intent_inference_.setUserCommandVelocity(*user_command_velocity);
 }

@@ -59,6 +59,8 @@ include_directories(
   ${EIGEN3_INCLUDE_DIRS}
 )
 
+
+
 ################################################################################
 # Install
 ################################################################################
@@ -77,6 +79,7 @@ target_link_libraries(gripper_pose_publisher_node
 add_executable(motion_controller_teleoperation_node
   example/motion_controller_teleoperation_node.cpp
   src/cartesian_control/motion_controller_teleoperation.cpp
+  src/utils/velocity_estimator.cpp
 )
 target_link_libraries(motion_controller_teleoperation_node
   ${catkin_LIBRARIES}
@@ -94,7 +97,6 @@ add_executable(shared_control_node
   example/shared_control_node.cpp
   src/shared_control/shared_control.cpp
   src/shared_control/intent_inference.cpp
-  src/shared_control/controller_direction_estimator.cpp
 )
 target_link_libraries(shared_control_node
   ${catkin_LIBRARIES}

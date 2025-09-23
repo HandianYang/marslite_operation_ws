@@ -4,6 +4,7 @@
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
 #include <geometry_msgs/Point.h>
+#include <geometry_msgs/Vector3.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <map>
 
@@ -32,19 +33,20 @@ const double kProximityLikelihoodParameter = 3.0;
 // confidence threshold to lock target
 const double kLockTargetConfidenceThreshold = 0.3;
 // user command displacement threshold to consider "idle"
-const double kIdleDisplacementThreshold = 1e-3; // [m]
+const double kIdleDisplacementThreshold = 1e-4; // [m]
 // distance threshold to consider "near" a goal
-const double kNearGoalDistanceThreshold = 0.05; // [m]
+const double kReachedDistanceThreshold = 0.03; // [m]
 // direction similarity threshold to consider "toward" a goal
 //   (similarity > 0.5 == angle < 60 degrees)
 const double kDirectionSimilarityThreshold = 0.5; // [cosine similarity]
 
 enum GripperMotionState {
-  IDLE = 0,
-  APPROACHING = 1,
-  RETREATING = 2,
-  GRASPING = 3,
-  NEAR_GOAL = 4
+  IDLE,
+  APPROACHING,
+  RETREATING,
+  LOCKED,
+  REACHED,
+  GRASPED
 };
 
 class IntentInference {
@@ -59,12 +61,16 @@ class IntentInference {
     gripper_position_ = position;
   }
   
-  inline void setUserCommandDirection(const geometry_msgs::Point& direction) {
-    user_command_direction_ = direction;
+  inline void setUserCommandVelocity(const geometry_msgs::Vector3& velocity) {
+    user_command_velocity_ = velocity;
   }
 
   inline void setGripperStatus(const std_msgs::Bool& status) {
     gripper_status_ = status;
+  }
+
+  inline void setSafetyButtonStatus(const bool& is_pressed) {
+    is_positional_safety_button_pressed_ = is_pressed;
   }
 
   inline detection_msgs::DetectedObject getMostLikelyGoal() const {
@@ -87,14 +93,17 @@ class IntentInference {
     return belief_;
   }
   
-  inline const bool isNotLocked() const {
-    return !(gripper_motion_state_ == GripperMotionState::APPROACHING
-        && confidence_ >= kLockTargetConfidenceThreshold);
+  inline const bool isLocked() const {
+    return gripper_motion_state_ == GripperMotionState::LOCKED;
+  }
+
+  inline const bool isReached() const {
+    return gripper_motion_state_ == GripperMotionState::REACHED;
   }
 
   visualization_msgs::MarkerArray getBeliefVisualization();
 
-  geometry_msgs::Point getGoalDirection(const detection_msgs::DetectedObject& goal) const;
+  geometry_msgs::Vector3 getGoalDirection(const detection_msgs::DetectedObject& goal) const;
 
   void updateBelief();
 
@@ -103,11 +112,11 @@ class IntentInference {
   geometry_msgs::Point transformOdomToBaseLink(const geometry_msgs::Point& point_in_odom);
   void updateGripperMotionState();
   bool isUserCommandIdle() const;
-  bool isNearAnyGoal() const;
+  bool isAnyGoalReached() const;
   bool isTowardAnyGoal() const;
   
-  double getCosineSimilarity(const geometry_msgs::Point& user_direction,
-                             const geometry_msgs::Point& goal_direction) const;
+  double getCosineSimilarity(const geometry_msgs::Vector3& user_direction,
+                             const geometry_msgs::Vector3& goal_direction) const;
   void normalizeBelief();
   void calculateConfidence();
 
@@ -115,15 +124,18 @@ class IntentInference {
   double confidence_lower_bound_; // [0,1], constant
   double confidence_upper_bound_; // [0,1], constant
   double confidence_; // [0,1]
+
+  bool is_positional_safety_button_pressed_;
   
   geometry_msgs::Point gripper_position_;
-  geometry_msgs::Point user_command_direction_;
+  geometry_msgs::Vector3 user_command_velocity_;
   std_msgs::Bool gripper_status_;
   detection_msgs::DetectedObjectArray recorded_objects_;
   detection_msgs::ObjectBeliefMap belief_;
   detection_msgs::ObjectPositionMap position_to_base_link_;
   Tf2ListenerWrapper tf2_listener_;
   GripperMotionState gripper_motion_state_;
+  GripperMotionState last_gripper_motion_state_;
 };
 
 #endif // MARSLITE_CONTROl_SHARED_CONTROL_INTENT_INFERENCE_H

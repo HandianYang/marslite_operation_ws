@@ -2,13 +2,15 @@
 #define MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROL_H
 
 #include <ros/ros.h>
+#include <geometry_msgs/Vector3.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <std_msgs/Bool.h>
 
 #include "detection_msgs/DetectedObjectArray.h"
 #include "shared_control/intent_inference.h"
+#include "utils/velocity_estimator.h"
 #include "utils/tf2_listener_wrapper.h"
-#include "shared_control/controller_direction_estimator.h"
+#include "utils/rpy.h"
 
 class SharedControl {
  public:
@@ -21,7 +23,7 @@ class SharedControl {
   void publishIntentBeliefVisualization();
   void publishBlendingGripperPose();
   geometry_msgs::PoseStamped getTargetPose();
-  geometry_msgs::Point getTargetPosition() const;
+  geometry_msgs::Point getTargetPosition();
   geometry_msgs::Quaternion getTargetOrientation();
 
   void currentGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
@@ -31,6 +33,7 @@ class SharedControl {
   void orientationSafetyButtonSignalCallback(const std_msgs::Bool::ConstPtr& signal);
   void userDesiredGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& user_desired_gripper_pose);
   void userDesiredGripperStatusCallback(const std_msgs::Bool::ConstPtr& user_desired_gripper_status);
+  void userCommandVelocityCallback(const geometry_msgs::Vector3::ConstPtr& user_command_velocity);
 
   // ROS mechanisms
   ros::NodeHandle nh_;
@@ -39,6 +42,7 @@ class SharedControl {
   ros::Publisher desired_gripper_status_publisher_;
   ros::Publisher belief_visualization_publisher_;
   ros::Publisher reset_pose_signal_publisher_;
+  ros::Publisher user_command_direction_publisher_;
   ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber detected_objects_subscriber_;
   ros::Subscriber record_signal_subscriber_;
@@ -46,10 +50,11 @@ class SharedControl {
   ros::Subscriber orientation_safety_button_signal_subscriber_;
   ros::Subscriber user_desired_gripper_pose_subscriber_;
   ros::Subscriber user_desired_gripper_status_subscriber_;
+  ros::Subscriber user_command_velocity_subscriber_;
 
   // self-defined class instances
   IntentInference intent_inference_;
-  ControllerDirectionEstimator controller_direction_estimator_{5};
+  VelocityEstimator velocity_estimator_;
 
   // ROS messages
   geometry_msgs::PoseStamped current_gripper_pose_;
@@ -60,7 +65,7 @@ class SharedControl {
 
   // flags
   bool begin_recording_;  // true if record_siganl is received
-  bool is_locked_;  // true if intent_inference_ is in LOCK state
+  bool is_previously_locked_;  // true if intent_inference_ is in LOCK state
 };
 
 #endif // #ifndef MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROL_H

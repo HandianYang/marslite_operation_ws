@@ -15,7 +15,8 @@ int main(int argc, char** argv) {
   geometry_msgs::PoseStamped gripper_pose;
   while (ros::ok()) {
     gripper_transform = tf2_listener.lookupTransform("base_link", "tm_gripper");
-    gripper_pose.header = gripper_transform.header;
+    gripper_pose.header.frame_id = "base_link";
+    gripper_pose.header.stamp = ros::Time::now();
     gripper_pose.pose.position.x = gripper_transform.transform.translation.x;
     gripper_pose.pose.position.y = gripper_transform.transform.translation.y;
     gripper_pose.pose.position.z = gripper_transform.transform.translation.z;
