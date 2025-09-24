@@ -17,8 +17,8 @@ class VelocityEstimator {
     params.buffer_size = std::max<size_t>(3, size);
   }
 
-  inline void setMinVelocity(const double& min_velocity) {
-    params.min_velocity = min_velocity;
+  inline void setMinSpeed(const double& min_speed) {
+    params.min_speed = min_speed;
   }
   
   inline void clear() {
@@ -45,7 +45,7 @@ class VelocityEstimator {
  private:
   struct Params {
     size_t buffer_size;
-    double min_velocity;
+    double min_speed;
   } params;
 
   geometry_msgs::Vector3 getVelocity() const;

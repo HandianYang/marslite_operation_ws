@@ -14,6 +14,8 @@
 
 class SharedControl {
  public:
+  static inline constexpr double kTargetShiftDisplacement = 0.04; // [m]
+
   explicit SharedControl(const ros::NodeHandle& nh = ros::NodeHandle());
   void run();
 
@@ -42,7 +44,7 @@ class SharedControl {
   ros::Publisher desired_gripper_status_publisher_;
   ros::Publisher belief_visualization_publisher_;
   ros::Publisher reset_pose_signal_publisher_;
-  ros::Publisher user_command_direction_publisher_;
+  ros::Publisher gripper_motion_state_publisher_;
   ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber detected_objects_subscriber_;
   ros::Subscriber record_signal_subscriber_;
@@ -54,7 +56,6 @@ class SharedControl {
 
   // self-defined class instances
   IntentInference intent_inference_;
-  VelocityEstimator velocity_estimator_;
 
   // ROS messages
   geometry_msgs::PoseStamped current_gripper_pose_;

@@ -100,13 +100,13 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
       gripper_marker.color.g = 1.0;
       gripper_marker.color.b = 0.0;
     break;
-    case GripperMotionState::APPROACHING:
+    case GripperMotionState::APPROACH:
       // light green
       gripper_marker.color.r = 0.6;
       gripper_marker.color.g = 1.0;
       gripper_marker.color.b = 0.6;
     break;
-    case GripperMotionState::RETREATING:
+    case GripperMotionState::RETREAT:
       // red
       gripper_marker.color.r = 1.0;
       gripper_marker.color.g = 0.0;
@@ -156,14 +156,14 @@ void IntentInference::updateBelief() {
     return;
   }
 
-  if (gripper_motion_state_ == GripperMotionState::RETREATING) {
+  if (gripper_motion_state_ == GripperMotionState::RETREAT) {
     for (auto& [_, prob] : belief_) {
       prob = 1.0 / belief_.size();
     }
     return;
   }
 
-  // GripperMotionState::APPROACHING
+  // GripperMotionState::APPROACH
   // -> Update belief using Bayesian inference with Markov transition model
   detection_msgs::ObjectBeliefMap new_belief;
   for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
@@ -238,15 +238,15 @@ void IntentInference::updateGripperMotionState() {
     gripper_motion_state_ = GripperMotionState::GRASPED;
   } else if (this->isAnyGoalReached()) {
     gripper_motion_state_ = GripperMotionState::REACHED;
-  } else if (!this->isTowardAnyGoal()) {
-    gripper_motion_state_ = GripperMotionState::RETREATING;
+  } else if (this->isAwayFromAllGoals()) {
+    gripper_motion_state_ = GripperMotionState::RETREAT;
   } else {
     // Convert to LOCKED if ...
     // (1) already LOCKED;
-    // (2) already APPROACHING and confidence is high enough.
-    gripper_motion_state_ = GripperMotionState::APPROACHING;
+    // (2) already APPROACH and confidence is high enough.
+    gripper_motion_state_ = GripperMotionState::APPROACH;
     if (last_gripper_motion_state_ == GripperMotionState::LOCKED || 
-        last_gripper_motion_state_ == GripperMotionState::APPROACHING && 
+        last_gripper_motion_state_ == GripperMotionState::APPROACH && 
         confidence_ >= kLockTargetConfidenceThreshold) {
       gripper_motion_state_ = GripperMotionState::LOCKED;
     }
@@ -254,12 +254,12 @@ void IntentInference::updateGripperMotionState() {
 }
 
 bool IntentInference::isUserCommandIdle() const {
-  const double user_command_displacement = std::sqrt(
+  const double speed = std::sqrt(
       user_command_velocity_.x * user_command_velocity_.x +
       user_command_velocity_.y * user_command_velocity_.y +
       user_command_velocity_.z * user_command_velocity_.z
   );
-  return user_command_displacement < kIdleDisplacementThreshold;
+  return speed < kIdleSpeedThreshold;
 }
 
 bool IntentInference::isAnyGoalReached() const {
@@ -277,15 +277,15 @@ bool IntentInference::isAnyGoalReached() const {
   return false;
 }
 
-bool IntentInference::isTowardAnyGoal() const {
+bool IntentInference::isAwayFromAllGoals() const {
   for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
     const geometry_msgs::Vector3 goal_direction = this->getGoalDirection(recorded_object);
     const double direction_similarity = this->getCosineSimilarity(user_command_velocity_, goal_direction);
-    if (direction_similarity > kDirectionSimilarityThreshold) {
-      return true;
+    if (direction_similarity > 0) {
+      return false;
     }
   }
-  return false;
+  return true;
 }
 
 double IntentInference::getCosineSimilarity(

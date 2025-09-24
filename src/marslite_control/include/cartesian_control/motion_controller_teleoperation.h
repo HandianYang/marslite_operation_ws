@@ -14,18 +14,25 @@
 #include "utils/tf2_listener_wrapper.h"
 #include "utils/velocity_estimator.h"
 
-enum RobotOperatingDirection {
-  FRONT,
-  LEFT,
-  RIGHT
+enum class RobotOperatingDirection : uint8_t {
+  FRONT = 0,
+  LEFT = 1,
+  RIGHT = 2
 };
-
-const double kTriggerThreshold = 0.95;
-const double kPositionTolerance = 1e-3;
-const double kOrientationTolerance = 1e-3;
 
 class MotionControllerTeleoperation {
  public:
+  // threshold for considering the trigger button of motion controllers is pressed
+  static inline constexpr double kTriggerThreshold = 0.95;
+  // tolerance for considering two positions are the same
+  static inline constexpr double kPositionTolerance = 1e-3;
+  // tolerance for considering two orientations are the same (in terms of quaternion)
+  static inline constexpr double kOrientationTolerance = 1e-3;
+  // buffer size for velocity estimator
+  static inline constexpr size_t kEstimatorBufferSize = 10;
+  // minimum speed for velocity estimator
+  static inline constexpr double kEstimatorMinSpeed = 1e-2;
+
   explicit MotionControllerTeleoperation(const ros::NodeHandle& nh = ros::NodeHandle());
 
   inline void resetToFrontPose() {
@@ -87,17 +94,13 @@ class MotionControllerTeleoperation {
 
   inline void resetPositionalMovement() {
     // Shift a little to avoid immediate stop
-    // TODO: Consider end-effector velocity; Replace previous_gripper_pose_
-    geometry_msgs::Point gripper_direction;
-    gripper_direction.x = current_gripper_pose_.pose.position.x - previous_gripper_pose_.pose.position.x;
-    gripper_direction.y = current_gripper_pose_.pose.position.y - previous_gripper_pose_.pose.position.y;
-    gripper_direction.z = current_gripper_pose_.pose.position.z - previous_gripper_pose_.pose.position.z;
-    
-    desired_gripper_pose_.pose.position.x = current_gripper_pose_.pose.position.x + gripper_direction.x * 2;
-    desired_gripper_pose_.pose.position.y = current_gripper_pose_.pose.position.y + gripper_direction.y * 2;
-    desired_gripper_pose_.pose.position.z = current_gripper_pose_.pose.position.z + gripper_direction.z * 2;
+    gripper_velocity_estimator_.estimateVelocity();
+    gripper_velocity_ = gripper_velocity_estimator_.getEstimatedVelocity();
+    desired_gripper_pose_.pose.position.x = current_gripper_pose_.pose.position.x + gripper_velocity_.x * 0.01;
+    desired_gripper_pose_.pose.position.y = current_gripper_pose_.pose.position.y + gripper_velocity_.y * 0.01;
+    desired_gripper_pose_.pose.position.z = current_gripper_pose_.pose.position.z + gripper_velocity_.z * 0.01;
 
-    // reset velocity
+    // reset user_command_velocity_
     user_command_velocity_estimator_.clear();
     user_command_velocity_ = geometry_msgs::Vector3();
   }
@@ -115,6 +118,12 @@ class MotionControllerTeleoperation {
   }
 
   void publishUserCommandVelocityMarker();
+
+  inline void publisherGripperVelocity() {
+    gripper_velocity_publisher_.publish(gripper_velocity_);
+  }
+
+  void publishGripperVelocityMarker();
 
   inline void publishMobilePlatformVelocity() {
     mobile_platform_velocity_publisher_.publish(mobile_platform_velocity_);
@@ -145,6 +154,8 @@ class MotionControllerTeleoperation {
 
   ros::Publisher user_command_velocity_publisher_;
   ros::Publisher user_command_velocity_marker_publisher_;
+  ros::Publisher gripper_velocity_publisher_;
+  ros::Publisher gripper_velocity_marker_publisher_;
   
   ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber left_controller_pose_subscriber_;
@@ -155,12 +166,10 @@ class MotionControllerTeleoperation {
   geometry_msgs::PoseStamped initial_left_controller_pose_;
   geometry_msgs::PoseStamped current_left_controller_pose_;
   geometry_msgs::PoseStamped initial_gripper_pose_;
-  // updated by lookupCurrentGripperPose()
-  geometry_msgs::PoseStamped current_gripper_pose_;
-  // the previous value of current_gripper_pose_
-  geometry_msgs::PoseStamped previous_gripper_pose_;
+  geometry_msgs::PoseStamped current_gripper_pose_; // updated by lookupCurrentGripperPose()
   geometry_msgs::PoseStamped desired_gripper_pose_;
   geometry_msgs::Vector3 user_command_velocity_;
+  geometry_msgs::Vector3 gripper_velocity_;
   geometry_msgs::Twist mobile_platform_velocity_;
   std_msgs::Bool desired_gripper_status_;
   std_msgs::Bool record_signal_;
@@ -182,6 +191,7 @@ class MotionControllerTeleoperation {
   std::mutex mutex_;
   RobotOperatingDirection robot_operating_direction_;
   VelocityEstimator user_command_velocity_estimator_;
+  VelocityEstimator gripper_velocity_estimator_;
 };
 
 #endif // #ifndef MARSLITE_CONTROL_CARTESIAN_CONTROL_MOTION_CONTROLLER_TELEOPERATION_H

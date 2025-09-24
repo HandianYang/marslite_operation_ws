@@ -28,29 +28,42 @@ using ObjectPositionMap = std::map<detection_msgs::DetectedObject, geometry_msgs
 
 } // namespace detection_msgs
 
-// proximity likelihood parameter
-const double kProximityLikelihoodParameter = 3.0;
-// confidence threshold to lock target
-const double kLockTargetConfidenceThreshold = 0.3;
-// user command displacement threshold to consider "idle"
-const double kIdleDisplacementThreshold = 1e-4; // [m]
-// distance threshold to consider "near" a goal
-const double kReachedDistanceThreshold = 0.03; // [m]
-// direction similarity threshold to consider "toward" a goal
-//   (similarity > 0.5 == angle < 60 degrees)
-const double kDirectionSimilarityThreshold = 0.5; // [cosine similarity]
-
-enum GripperMotionState {
-  IDLE,
-  APPROACHING,
-  RETREATING,
-  LOCKED,
-  REACHED,
-  GRASPED
+enum class GripperMotionState : uint8_t {
+  IDLE = 0,
+  APPROACH = 1,
+  RETREAT = 2,
+  LOCKED = 3,
+  REACHED = 4,
+  GRASPED = 5
 };
+
+static std::string toString(GripperMotionState s) {
+  switch(s) {
+    case GripperMotionState::IDLE:  return "IDLE";
+    case GripperMotionState::APPROACH:  return "APPROACH";
+    case GripperMotionState::RETREAT: return "RETREAT";
+    case GripperMotionState::LOCKED:  return "LOCKED";
+    case GripperMotionState::REACHED: return "REACHED";
+    case GripperMotionState::GRASPED: return "GRASPED";
+  }
+  return "UNKNOWN"; // fallback
+}
+
 
 class IntentInference {
  public:
+  // proximity likelihood parameter
+  static inline constexpr double kProximityLikelihoodParameter = 3.0;
+  // confidence threshold to lock target
+  static inline constexpr double kLockTargetConfidenceThreshold = 0.3;
+  // [m/s] speed threshold to consider "GripperMotionState::IDLE"
+  static inline constexpr double kIdleSpeedThreshold = 1e-3;
+  // [m] distance threshold to consider reaching a goal
+  static inline constexpr double kReachedDistanceThreshold = 0.05;
+  // direction similarity threshold to consider moving toward a goal
+  //   (cos(60 degrees) = 0.5)
+  static inline constexpr double kDirectionSimilarityThreshold = 0.5;
+
   IntentInference(const double& transition_probability = 0.1,
                   const double& confidence_lower_bound = 0.3,
                   const double& confidence_upper_bound = 0.9);
@@ -92,6 +105,10 @@ class IntentInference {
   inline detection_msgs::ObjectBeliefMap getBelief() const {
     return belief_;
   }
+
+  inline GripperMotionState getGripperMotionState() const {
+    return gripper_motion_state_;
+  }
   
   inline const bool isLocked() const {
     return gripper_motion_state_ == GripperMotionState::LOCKED;
@@ -113,7 +130,7 @@ class IntentInference {
   void updateGripperMotionState();
   bool isUserCommandIdle() const;
   bool isAnyGoalReached() const;
-  bool isTowardAnyGoal() const;
+  bool isAwayFromAllGoals() const;
   
   double getCosineSimilarity(const geometry_msgs::Vector3& user_direction,
                              const geometry_msgs::Vector3& goal_direction) const;

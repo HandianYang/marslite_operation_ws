@@ -15,8 +15,10 @@ MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHand
   this->parseParameters();
   this->initializePublishers();
   this->initializeSubscribers();
-  user_command_velocity_estimator_.setBufferSize(10);
-  user_command_velocity_estimator_.setMinVelocity(1e-3);
+  user_command_velocity_estimator_.setBufferSize(kEstimatorBufferSize);
+  user_command_velocity_estimator_.setMinSpeed(kEstimatorMinSpeed);
+  gripper_velocity_estimator_.setBufferSize(kEstimatorBufferSize);
+  gripper_velocity_estimator_.setMinSpeed(kEstimatorMinSpeed);
 }
 
 /******************************************************
@@ -33,8 +35,7 @@ void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseS
     loop_rate_.sleep();
     ros::spinOnce();
   }
-  ROS_INFO("Reached the target pose. You can start teleoperation by calling run() now!");
-  previous_gripper_pose_ = current_gripper_pose_ = target_pose;
+  ROS_INFO("Reached the target pose. You can start teleoperation now!");
 }
 
 void MotionControllerTeleoperation::run() {
@@ -104,10 +105,15 @@ void MotionControllerTeleoperation::initializePublishers() {
       "/mob_plat/cmd_vel", 1);
   record_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
       "/marslite_control/record_signal", 1);
+  
   user_command_velocity_publisher_ = nh_.advertise<geometry_msgs::Vector3>(
       "/marslite_control/user_command_velocity", 1);
   user_command_velocity_marker_publisher_ = nh_.advertise<visualization_msgs::Marker>(
       "/marslite_control/user_command_velocity_marker", 1);
+  gripper_velocity_publisher_ = nh_.advertise<geometry_msgs::Vector3>(
+      "/marslite_control/gripper_velocity", 1);
+  gripper_velocity_marker_publisher_ = nh_.advertise<visualization_msgs::Marker>(
+      "/marslite_control/gripper_velocity_marker", 1);
 }
 
 void MotionControllerTeleoperation::initializeSubscribers() {
@@ -303,7 +309,7 @@ void MotionControllerTeleoperation::publishUserCommandVelocityMarker() {
   visualization_msgs::Marker marker;
   marker.header.frame_id = "base_link";
   marker.header.stamp = ros::Time::now();
-  marker.ns = "user_command_direction";
+  marker.ns = "user_command_velocity";
   marker.id = 0;
   marker.type = visualization_msgs::Marker::ARROW;
 
@@ -312,14 +318,14 @@ void MotionControllerTeleoperation::publishUserCommandVelocityMarker() {
       user_command_velocity_.y,
       user_command_velocity_.z
   );
-  const double user_command_displacement = user_command_velocity_tf2.length();
-  if (user_command_displacement < 1e-3) {
+  const double user_command_speed = user_command_velocity_tf2.length();
+  if (user_command_speed < 1e-3) {
     marker.action = visualization_msgs::Marker::DELETE;
     user_command_velocity_marker_publisher_.publish(marker);
     return;
   }
   tf2::Vector3 user_command_velocity_normalized = 
-      user_command_velocity_tf2 / user_command_displacement;
+      user_command_velocity_tf2 / user_command_speed;
 
   // Build orientation: rotate +X axis to user_command_velocity_normalized
   const tf2::Vector3 x_axis(1.0, 0.0, 0.0);
@@ -352,8 +358,8 @@ void MotionControllerTeleoperation::publishUserCommandVelocityMarker() {
   // Arrow size: scale.x = shaft length; y/z = diameters; head length auto-scales with y/z
   // We'll split the total length: shaft + head
   const double head_length_ratio = 0.1;  // head length = 10% of total length
-  const double head_length = std::max(0.001, head_length_ratio * user_command_displacement);
-  const double shaft_length = std::max(0.0, user_command_displacement - head_length);
+  const double head_length = std::max(0.001, head_length_ratio * user_command_speed);
+  const double shaft_length = std::max(0.0, user_command_speed - head_length);
   marker.scale.x = shaft_length;
   marker.scale.y = 0.01;  // shaft diameter
   marker.scale.z = 0.01;  // head diameter
@@ -365,14 +371,90 @@ void MotionControllerTeleoperation::publishUserCommandVelocityMarker() {
   user_command_velocity_marker_publisher_.publish(marker);
 }
 
+void MotionControllerTeleoperation::publishGripperVelocityMarker() {
+  visualization_msgs::Marker marker;
+  marker.header.frame_id = "base_link";
+  marker.header.stamp = ros::Time::now();
+  marker.ns = "gripper_velocity";
+  marker.id = 0;
+  marker.type = visualization_msgs::Marker::ARROW;
+
+  const tf2::Vector3 gripper_velocity_tf2(
+      gripper_velocity_.x,
+      gripper_velocity_.y,
+      gripper_velocity_.z
+  );
+  const double gripper_speed = gripper_velocity_tf2.length();
+  if (gripper_speed < 1e-3) {
+    marker.action = visualization_msgs::Marker::DELETE;
+    gripper_velocity_marker_publisher_.publish(marker);
+    return;
+  }
+  tf2::Vector3 gripper_velocity_normalized = 
+      gripper_velocity_tf2 / gripper_speed;
+
+  // Build orientation: rotate +X axis to gripper_velocity_normalized
+  const tf2::Vector3 x_axis(1.0, 0.0, 0.0);
+  double dot = x_axis.dot(gripper_velocity_normalized);
+  if (dot > 1.0) dot = 1.0;
+  if (dot < -1.0) dot = -1.0;
+
+  tf2::Quaternion q;
+  if (dot > 1.0 - 1e-9) {
+    // Aligned with same direction: no rotation
+    q.setValue(0, 0, 0, 1);
+  } else if (dot < -1.0 + 1e-9) {
+    // Aligned with opposite direction: rotate 180° around any axis orthogonal to X.
+    //   Here, we choose Z axis
+    q.setValue(0, 0, 1, 0);
+  } else {
+    tf2::Vector3 axis = x_axis.cross(gripper_velocity_normalized);
+    axis.normalize();
+    const double angle = std::acos(dot);
+    q.setRotation(axis, angle);
+  }
+
+  marker.action = visualization_msgs::Marker::ADD;
+  marker.pose.position = current_gripper_pose_.pose.position;
+  marker.pose.orientation.x = q.x();
+  marker.pose.orientation.y = q.y();
+  marker.pose.orientation.z = q.z();
+  marker.pose.orientation.w = q.w();
+
+  // Arrow size: scale.x = shaft length; y/z = diameters; head length auto-scales with y/z
+  // We'll split the total length: shaft + head
+  const double head_length_ratio = 0.1;  // head length = 10% of total length
+  const double head_length = std::max(0.001, head_length_ratio * gripper_speed);
+  const double shaft_length = std::max(0.0, gripper_speed - head_length);
+  marker.scale.x = shaft_length;
+  marker.scale.y = 0.01;  // shaft diameter
+  marker.scale.z = 0.01;  // head diameter
+  marker.color.r = 0.5f;
+  marker.color.g = 0.0f;
+  marker.color.b = 0.5f;
+  marker.color.a = 1.0f;
+  gripper_velocity_marker_publisher_.publish(marker);
+}
+
 void MotionControllerTeleoperation::currentGripperPoseCallback(
     const geometry_msgs::PoseStamped::ConstPtr& msg) {
-  previous_gripper_pose_ = current_gripper_pose_;
+  // previous_gripper_pose_ = current_gripper_pose_;
   current_gripper_pose_ = *msg;
+
+  geometry_msgs::PointStamped waypoint;
+  waypoint.header = current_gripper_pose_.header;
+  waypoint.point = current_gripper_pose_.pose.position;
+  gripper_velocity_estimator_.addWaypoint(waypoint);
+  gripper_velocity_estimator_.estimateVelocity();
+  gripper_velocity_ = gripper_velocity_estimator_.getEstimatedVelocity();
+  this->publisherGripperVelocity();
+  this->publishGripperVelocityMarker();
 }
 
 void MotionControllerTeleoperation::leftControllerPoseCallback(
     const geometry_msgs::PoseStamped::ConstPtr& msg) {
+  current_left_controller_pose_.header.frame_id = "base_link";
+  current_left_controller_pose_.header.stamp = ros::Time::now();
   current_left_controller_pose_.pose = msg->pose;
 }
 

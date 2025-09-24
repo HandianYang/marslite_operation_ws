@@ -3,6 +3,7 @@
 #include <visualization_msgs/MarkerArray.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <std_msgs/String.h>
 
 /******************************************************
  *                  Constructors                      *  
@@ -13,8 +14,8 @@ SharedControl::SharedControl(const ros::NodeHandle& nh)
       intent_inference_(0.1) {
   this->initializePublishers();
   this->initializeSubscribers();
-  velocity_estimator_.setBufferSize(15);
-  velocity_estimator_.setMinVelocity(0.001);
+  // velocity_estimator_.setBufferSize(15);
+  // velocity_estimator_.setMinVelocity(0.001);
 }
 
 /******************************************************
@@ -24,6 +25,13 @@ SharedControl::SharedControl(const ros::NodeHandle& nh)
 void SharedControl::run() {
   while (nh_.ok()) {
     intent_inference_.updateBelief();
+
+    // Testing: publish gripper motion state
+    std::string state_string = toString(intent_inference_.getGripperMotionState());
+    std_msgs::String state_msg;
+    state_msg.data = state_string;
+    gripper_motion_state_publisher_.publish(state_msg);
+
     this->publishIntentBeliefVisualization();
     this->publishBlendingGripperPose();
     
@@ -49,8 +57,8 @@ void SharedControl::initializePublishers() {
   reset_pose_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
       "/marslite_control/lock_state_signal", 1
   );
-  user_command_direction_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
-      "marslite_control/user_command_direction", 1
+  gripper_motion_state_publisher_ = nh_.advertise<std_msgs::String>(
+      "/marslite_control/gripper_motion_state", 1
   );
 }
 
@@ -123,7 +131,7 @@ geometry_msgs::PoseStamped SharedControl::getTargetPose() {
 }
 
 geometry_msgs::Point SharedControl::getTargetPosition() {
-  // TODO: shift the position ahead kReachedDistanceThreshold
+  // TODO: shift the position ahead kTargetShiftDisplacement
   geometry_msgs::Point target_position = intent_inference_.getMostLikelyGoalPosition();
   geometry_msgs::Vector3 target_direction;
   target_direction.x = target_position.x - current_gripper_pose_.pose.position.x;
@@ -135,9 +143,9 @@ geometry_msgs::Point SharedControl::getTargetPosition() {
     target_direction.z * target_direction.z
   );
   geometry_msgs::Vector3 scaled_target_direction;
-  scaled_target_direction.x = target_direction.x / target_displacement * 0.028;
-  scaled_target_direction.y = target_direction.y / target_displacement * 0.028;
-  scaled_target_direction.z = target_direction.z / target_displacement * 0.028;
+  scaled_target_direction.x = target_direction.x / target_displacement * kTargetShiftDisplacement;
+  scaled_target_direction.y = target_direction.y / target_displacement * kTargetShiftDisplacement;
+  scaled_target_direction.z = target_direction.z / target_displacement * kTargetShiftDisplacement;
 
   target_position.x -= scaled_target_direction.x;
   target_position.y -= scaled_target_direction.y;
@@ -168,9 +176,31 @@ void SharedControl::currentGripperPoseCallback(
 void SharedControl::detectedObjectsCallback(
     const detection_msgs::DetectedObjectArray::ConstPtr& objects) {
   if (begin_recording_) {
-    intent_inference_.setRecordedObjects(*objects);
+    { // test scope
+      detection_msgs::DetectedObject object1;
+      object1.label = "object1";
+      object1.frame = "odom";
+      object1.confidence = 1.0;
+      object1.centroid.x = 0.378;
+      object1.centroid.y = 0.755;
+      object1.centroid.z = 0.984;
+
+      detection_msgs::DetectedObject object2;
+      object2.label = "object2";
+      object2.frame = "odom";
+      object2.confidence = 1.0;
+      object2.centroid.x = 0.544;
+      object2.centroid.y = 0.775;
+      object2.centroid.z = 0.968;
+
+      detection_msgs::DetectedObjectArray recorded_objects;
+      recorded_objects.objects.push_back(object1);
+      recorded_objects.objects.push_back(object2);
+      intent_inference_.setRecordedObjects(recorded_objects);
+    } // end test scope
+
+    // intent_inference_.setRecordedObjects(*objects);
     begin_recording_ = false;
-    ROS_INFO_STREAM("Received " << objects->objects.size() << " detected objects.");
   }
 }
 

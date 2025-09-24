@@ -7,9 +7,9 @@ void VelocityEstimator::estimateVelocity() {
   if (waypoint_buffer_.size() < 3)
     return;
   
-  const geometry_msgs::Vector3 velocity = this->getEstimatedVelocity();
+  const geometry_msgs::Vector3 velocity = this->getVelocity();
   const double speed = norm(velocity);
-  if (speed < params.min_velocity)
+  if (speed < params.min_speed)
     return;
 
   estimated_velocity_ = velocity;
