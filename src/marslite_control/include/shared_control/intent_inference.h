@@ -58,14 +58,18 @@ class IntentInference {
   static inline constexpr double kLockTargetConfidenceThreshold = 0.3;
   // [m/s] speed threshold to consider "GripperMotionState::IDLE"
   static inline constexpr double kIdleSpeedThreshold = 1e-3;
+  // [m] distance from target object to planned position
+  static inline constexpr double kTargetShiftDistance = 0.02;
   // [m] distance threshold to consider reaching a goal
-  static inline constexpr double kReachedDistanceThreshold = 0.05;
+  static inline constexpr double kNearDistanceThreshold = 0.03;
   // direction similarity threshold to consider moving toward one object
   //   (cos(45 degrees) = 0.707)
   static inline constexpr double kLockedSimilarityThreshold = 0.707;
   // direction similarity threshold to consider moving away from one object
   //   (cos(90 degrees) = 0)
   static inline constexpr double kRetreatSimilarityThreshold = 0.0;
+  // [s] time to confirm locking a target
+  static inline constexpr double kLockedTime = 0.5;
   // [s] cooldown time to transfer from RETREATED to UNLOCKED
   static inline constexpr double kRetreatCooldownTime = 1.0;
   // [m] distance tolerance to determine whether two positions are the same
@@ -91,6 +95,9 @@ class IntentInference {
     is_positional_safety_button_pressed_ = is_pressed;
   }
 
+  /**
+   * @note Be vulnerable to empty belief_
+   */
   inline detection_msgs::DetectedObject getMostLikelyGoal() const {
     const auto max_it = std::max_element(belief_.begin(), belief_.end(),
                                         [](const auto& a, const auto& b) {
@@ -103,12 +110,18 @@ class IntentInference {
     return position_to_base_link_.at(this->getMostLikelyGoal());
   }
 
-  inline geometry_msgs::Vector3 getMostLikelyGoalDirection() const {
-    geometry_msgs::Vector3 target_direction;
-    target_direction.x = target_position_.x - gripper_position_.x;
-    target_direction.y = target_position_.y - gripper_position_.y;
-    target_direction.z = target_position_.z - gripper_position_.z;
-    return target_direction;
+  /**
+   * @note Be cautious of zero output.
+   */
+  inline geometry_msgs::Point getPlannedPosition() const {
+    return planned_position_;
+  }
+  
+  /**
+   * @note Be cautious of zero output.
+   */
+  inline geometry_msgs::Vector3 getTargetDirection() const {
+    return target_direction_;
   }
 
   inline double getConfidence() const {
@@ -123,12 +136,8 @@ class IntentInference {
     return gripper_motion_state_;
   }
   
-  inline const bool isLocked() const {
+  inline const bool isInLockedState() const {
     return gripper_motion_state_ == GripperMotionState::LOCKED;
-  }
-
-  inline const bool isReached() const {
-    return gripper_motion_state_ == GripperMotionState::REACHED;
   }
 
   visualization_msgs::MarkerArray getBeliefVisualization();
@@ -137,25 +146,87 @@ class IntentInference {
 
  private:
   void updatePositionToBaseLink();
+  
   geometry_msgs::Point transformOdomToBaseLink(const geometry_msgs::Point& point_in_odom);
+
+  /**
+   * @brief Update `gripper_motion_state_` mainly; update `planned_position_`
+   *   and `target_direction_` in calculatePlannedPositionAndTargetDirection()
+   * @note The procedure and priority definition of the state machine are
+   *   listed in `marslite_control/README.md`
+   */
   void updateGripperMotionState();
-  const bool isUserCommandIdle() const;
-  const bool isTargetReached() const;
+
+  /**
+   * @brief Update `planned_position_` and `target_direction_`
+   * @note This function should be called before updating
+   *   `gripper_motion_state_`
+   */
+  void calculatePlannedPositionAndTargetDirection();
+  
+  /**
+   * @note `gripper_motion_state_` set to `REACHED` if true.
+   */
+  const bool isNearTarget() const;
+
+  /**
+   * @note This function was designed to avoid `gripper_motion_state_` being 
+   *   transferred from `LOCKED` to `REACHED` when the gripper immediately
+   *   enters the `REACHED` zone (sphere with radius `kNearDistanceThreshold`).
+   *   The transfer will be done as the gripper actually reaches
+   *   `planned_position_`.
+   * 
+   *   (p.s.) `planned_position_` is defined as the position a few centimeters in
+   *   front of the target object.
+   */
+  const bool isPlannedPositionReached() const;
+
+  /**
+   * @note This is one of the conditions that `gripper_motion_state_` is
+   *   transferred from `UNLOCKED` to `LOCKED`
+   */
   const bool isTowardTarget() const;
+
+  /**
+   * @brief Trigger `locked_timer_`.
+   * @note `locked_timer_` is used for `UNLOCKED` -> `LOCKED` transfer.
+   */
+  void triggerLockedTimer();
+
+  /**
+   * @return true if `locked_timer_` counts over `kLockedTime` seconds.
+   * @note `gripper_motion_state_` is transferred from `UNLOCKED` to `LOCKED`
+   *   if true.
+   */
+  const bool isLockedTimePassed();
+
+  /**
+   * @note `gripper_motion_state_` is transferred from `LOCKED` to `RETREATED`
+   *   if true.
+   */
   const bool isAwayFromTarget() const;
+
+  /**
+   * @brief Trigger `cooldown_timer_`.
+   * @note `cooldown_timer_` is used for `RETREATED` -> `UNLOCKED` transfer.
+   */
   void triggerCooldownTimer();
+  
+  /**
+   * @return true if `cooldown_timer_` counts over `kRetreatCooldownTime` seconds.
+   * @note `gripper_motion_state_` is transferred from `RETREATED` to `UNLOCKED`
+   *   if true.
+   */
   const bool isCooldownTimePassed();
 
   inline const bool isEmptyTargetPosition() const {
-    return target_position_ == geometry_msgs::Point();
+    return planned_position_ == geometry_msgs::Point();
   }
 
   inline const bool isEmptyTargetDirection() const {
     return target_direction_ == geometry_msgs::Vector3();
   }
   
-  // bool isAnyGoalReached() const;
-  // bool isAwayFromAllGoals() const;
   geometry_msgs::Vector3 getGoalDirection(const detection_msgs::DetectedObject& goal) const;
   
   double getCosineSimilarity(const geometry_msgs::Vector3& user_direction,
@@ -167,12 +238,18 @@ class IntentInference {
   double confidence_; // [0,1]
 
   bool is_positional_safety_button_pressed_;
+  bool is_locked_timer_started_;
   bool is_cooldown_timer_started_;
 
-  ros::Time start_time_;
-  ros::Time current_time_;
+  struct {
+    ros::Time start_time;
+    ros::Time current_time;
+    double getTimeDifference() const {
+      return (current_time - start_time).toSec();
+    }
+  } locked_timer_, cooldown_timer_; 
   geometry_msgs::Point gripper_position_;
-  geometry_msgs::Point target_position_;
+  geometry_msgs::Point planned_position_;  // defined as target's position ahead a bit distance
   geometry_msgs::Vector3 user_command_velocity_;
   geometry_msgs::Vector3 target_direction_;
   std_msgs::Bool gripper_status_;

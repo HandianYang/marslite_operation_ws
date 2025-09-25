@@ -14,8 +14,6 @@
 
 class SharedControl {
  public:
-  static inline constexpr double kTargetShiftDisplacement = 0.04; // [m]
-
   explicit SharedControl(const ros::NodeHandle& nh = ros::NodeHandle());
   void run();
 

@@ -14,8 +14,6 @@ SharedControl::SharedControl(const ros::NodeHandle& nh)
       intent_inference_(0.1) {
   this->initializePublishers();
   this->initializeSubscribers();
-  // velocity_estimator_.setBufferSize(15);
-  // velocity_estimator_.setMinVelocity(0.001);
 }
 
 /******************************************************
@@ -25,13 +23,6 @@ SharedControl::SharedControl(const ros::NodeHandle& nh)
 void SharedControl::run() {
   while (nh_.ok()) {
     intent_inference_.updateBelief();
-
-    // Testing: publish gripper motion state
-    std::string state_string = toString(intent_inference_.getGripperMotionState());
-    std_msgs::String state_msg;
-    state_msg.data = state_string;
-    gripper_motion_state_publisher_.publish(state_msg);
-
     this->publishIntentBeliefVisualization();
     this->publishBlendingGripperPose();
     
@@ -110,7 +101,7 @@ void SharedControl::publishBlendingGripperPose() {
 }
 
 geometry_msgs::PoseStamped SharedControl::getTargetPose() {
-  if (intent_inference_.isLocked()) {
+  if (intent_inference_.isInLockedState()) {
     is_previously_locked_ = true;
     
     geometry_msgs::PoseStamped target_pose;
@@ -131,35 +122,11 @@ geometry_msgs::PoseStamped SharedControl::getTargetPose() {
 }
 
 geometry_msgs::Point SharedControl::getTargetPosition() {
-  // TODO: shift the position ahead kTargetShiftDisplacement
-  geometry_msgs::Point target_position = intent_inference_.getMostLikelyGoalPosition();
-  geometry_msgs::Vector3 target_direction;
-  target_direction.x = target_position.x - current_gripper_pose_.pose.position.x;
-  target_direction.y = target_position.y - current_gripper_pose_.pose.position.y;
-  target_direction.z = target_position.z - current_gripper_pose_.pose.position.z;
-  const double target_displacement = std::sqrt(
-    target_direction.x * target_direction.x + 
-    target_direction.y * target_direction.y +
-    target_direction.z * target_direction.z
-  );
-  geometry_msgs::Vector3 scaled_target_direction;
-  scaled_target_direction.x = target_direction.x / target_displacement * kTargetShiftDisplacement;
-  scaled_target_direction.y = target_direction.y / target_displacement * kTargetShiftDisplacement;
-  scaled_target_direction.z = target_direction.z / target_displacement * kTargetShiftDisplacement;
-
-  target_position.x -= scaled_target_direction.x;
-  target_position.y -= scaled_target_direction.y;
-  target_position.z -= scaled_target_direction.z;
-  return target_position;
+  return intent_inference_.getPlannedPosition();
 }
 
 geometry_msgs::Quaternion SharedControl::getTargetOrientation() {
-  geometry_msgs::Point target_position = intent_inference_.getMostLikelyGoalPosition();
-  geometry_msgs::Vector3 target_direction;
-  target_direction.x = target_position.x - current_gripper_pose_.pose.position.x;
-  target_direction.y = target_position.y - current_gripper_pose_.pose.position.y;
-  target_direction.z = target_position.z - current_gripper_pose_.pose.position.z;
-
+  geometry_msgs::Vector3 target_direction = intent_inference_.getTargetDirection();
   RPY target_orientation;
   target_orientation.roll = M_PI / 2;
   target_orientation.pitch = 0;
@@ -176,30 +143,7 @@ void SharedControl::currentGripperPoseCallback(
 void SharedControl::detectedObjectsCallback(
     const detection_msgs::DetectedObjectArray::ConstPtr& objects) {
   if (begin_recording_) {
-    { // test scope
-      detection_msgs::DetectedObject object1;
-      object1.label = "object1";
-      object1.frame = "odom";
-      object1.confidence = 1.0;
-      object1.centroid.x = 0.378;
-      object1.centroid.y = 0.755;
-      object1.centroid.z = 0.984;
-
-      detection_msgs::DetectedObject object2;
-      object2.label = "object2";
-      object2.frame = "odom";
-      object2.confidence = 1.0;
-      object2.centroid.x = 0.544;
-      object2.centroid.y = 0.775;
-      object2.centroid.z = 0.968;
-
-      detection_msgs::DetectedObjectArray recorded_objects;
-      recorded_objects.objects.push_back(object1);
-      recorded_objects.objects.push_back(object2);
-      intent_inference_.setRecordedObjects(recorded_objects);
-    } // end test scope
-
-    // intent_inference_.setRecordedObjects(*objects);
+    intent_inference_.setRecordedObjects(*objects);
     begin_recording_ = false;
   }
 }
@@ -207,6 +151,28 @@ void SharedControl::detectedObjectsCallback(
 void SharedControl::recordSignalCallback(
     const std_msgs::Bool::ConstPtr& signal) {
   begin_recording_ = true;
+  { // test scope
+    detection_msgs::DetectedObject object1;
+    object1.label = "object1";
+    object1.frame = "odom";
+    object1.confidence = 1.0;
+    object1.centroid.x = 0.378;
+    object1.centroid.y = 0.755;
+    object1.centroid.z = 0.984;
+
+    detection_msgs::DetectedObject object2;
+    object2.label = "object2";
+    object2.frame = "odom";
+    object2.confidence = 1.0;
+    object2.centroid.x = 0.544;
+    object2.centroid.y = 0.775;
+    object2.centroid.z = 0.968;
+
+    detection_msgs::DetectedObjectArray recorded_objects;
+    recorded_objects.objects.push_back(object1);
+    recorded_objects.objects.push_back(object2);
+    intent_inference_.setRecordedObjects(recorded_objects);
+  } // end test scope
 }
 
 void SharedControl::positionSafetyButtonSignalCallback(

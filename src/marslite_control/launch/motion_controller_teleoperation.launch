@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <env name="ROSCONSOLE_FORMAT" value="[${severity}] [${node}] ${message}"/>
-
   <include file="$(find file_server)/launch/ros_sharp_communication.launch"/>
 
   <arg name="position_scale" default="0.8"/>

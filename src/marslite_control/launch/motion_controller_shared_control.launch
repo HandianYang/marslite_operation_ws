@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <env name="ROSCONSOLE_FORMAT" value="[${severity}] [${node}] ${message}"/>
-
   <arg name="position_scale" default="1.0"/>
   <arg name="orientation_scale" default="0.8"/>
   <include file="$(find marslite_control)/launch/motion_controller_teleoperation.launch">
