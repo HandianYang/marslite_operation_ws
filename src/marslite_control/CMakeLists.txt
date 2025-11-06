@@ -59,22 +59,12 @@ include_directories(
   ${EIGEN3_INCLUDE_DIRS}
 )
 
-
-
-################################################################################
-# Install
-################################################################################
-
-################################################################################
-# Test
-################################################################################
-
-add_executable(gripper_pose_publisher_node
-  src/gripper_pose_publisher_node.cpp
-)
-target_link_libraries(gripper_pose_publisher_node
-  ${catkin_LIBRARIES}
-)
+# add_executable(gripper_pose_publisher_node
+#   src/gripper_pose_publisher_node.cpp
+# )
+# target_link_libraries(gripper_pose_publisher_node
+#   ${catkin_LIBRARIES}
+# )
 
 add_executable(motion_controller_teleoperation_node
   example/motion_controller_teleoperation_node.cpp
@@ -99,5 +89,20 @@ add_executable(shared_control_node
   src/shared_control/intent_inference.cpp
 )
 target_link_libraries(shared_control_node
+  ${catkin_LIBRARIES}
+)
+
+################################################################################
+# Install
+################################################################################
+
+################################################################################
+# Test
+################################################################################
+
+add_executable(test_cartesian_control
+  test/test_cartesian_control.cpp
+)
+target_link_libraries(test_cartesian_control
   ${catkin_LIBRARIES}
 )

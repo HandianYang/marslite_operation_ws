@@ -18,15 +18,10 @@ class SharedControl {
   void run();
 
  private:
+  void parseParameters();
   void initializePublishers();
   void initializeSubscribers();
-  void publishIntentBeliefVisualization();
-  void publishBlendingGripperPose();
-  geometry_msgs::PoseStamped getTargetPose();
-  geometry_msgs::Point getTargetPosition();
-  geometry_msgs::Quaternion getTargetOrientation();
-
-  void currentGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
+  // void currentGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
   void detectedObjectsCallback(const detection_msgs::DetectedObjectArray::ConstPtr& objects);
   void recordSignalCallback(const std_msgs::Bool::ConstPtr& signal);
   void positionSafetyButtonSignalCallback(const std_msgs::Bool::ConstPtr& signal);
@@ -34,6 +29,13 @@ class SharedControl {
   void userDesiredGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& user_desired_gripper_pose);
   void userDesiredGripperStatusCallback(const std_msgs::Bool::ConstPtr& user_desired_gripper_status);
   void userCommandVelocityCallback(const geometry_msgs::Vector3::ConstPtr& user_command_velocity);
+
+  void updateCurrentGripperPositionForIntentInference();
+  void publishIntentBeliefVisualization();
+  void publishBlendingGripperPose();
+  geometry_msgs::PoseStamped getTargetPose();
+  geometry_msgs::Point getTargetPosition();
+  geometry_msgs::Quaternion getTargetOrientation();
 
   // ROS mechanisms
   ros::NodeHandle nh_;
@@ -43,7 +45,8 @@ class SharedControl {
   ros::Publisher belief_visualization_publisher_;
   ros::Publisher reset_pose_signal_publisher_;
   ros::Publisher gripper_motion_state_publisher_;
-  ros::Subscriber current_gripper_pose_subscriber_;
+
+  // ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber detected_objects_subscriber_;
   ros::Subscriber record_signal_subscriber_;
   ros::Subscriber position_safety_button_signal_subscriber_;
@@ -54,15 +57,17 @@ class SharedControl {
 
   // self-defined class instances
   IntentInference intent_inference_;
+  Tf2ListenerWrapper tf2_listener_;
 
   // ROS messages
-  geometry_msgs::PoseStamped current_gripper_pose_;
+  // geometry_msgs::PoseStamped current_gripper_pose_;
   geometry_msgs::PoseStamped user_desired_gripper_pose_;
   std_msgs::Bool user_desired_gripper_status_;
   std_msgs::Bool position_safety_button_signal_;
   std_msgs::Bool orientation_safety_button_signal_;
 
   // flags
+  bool use_sim_;  // true if running in simulation
   bool begin_recording_;  // true if record_siganl is received
   bool is_previously_locked_;  // true if intent_inference_ is in LOCK state
 };

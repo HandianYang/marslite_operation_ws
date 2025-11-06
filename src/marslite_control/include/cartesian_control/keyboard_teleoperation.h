@@ -8,18 +8,33 @@
 
 #include "cartesian_control/kinematics_constants.h"
 #include "utils/rpy.h"
+#include "utils/tf2_listener_wrapper.h"
 
 class KeyboardTeleoperation {
-public:
+ public:
   explicit KeyboardTeleoperation(const ros::NodeHandle& nh = ros::NodeHandle());
-  void teleoperate();
+  void run();
 
-private:
+ private:
+  void parseParameters();
+  void initializePublishers();
+  void setInitialGripperPose();
+
+  void getKeyboardInput();
+  void processInput();
+  void processInputInPositionControl();
+  void processInputInOrientationControl();
+  
+  inline void publishPose() {
+    desired_gripper_pose_publisher_.publish(desired_gripper_pose_);
+  }
+
   // ROS mechanisms
   ros::NodeHandle nh_;
   ros::Rate rate_;
   ros::Publisher desired_gripper_pose_publisher_;
   ros::Publisher desired_gripper_status_publisher_;
+  Tf2ListenerWrapper tf2_listener_;
 
   // messages
   geometry_msgs::PoseStamped desired_gripper_pose_;
@@ -28,26 +43,9 @@ private:
   RPY desired_gripper_pose_rpy_;
   
   // flags
-  bool is_stopped_;
-  bool is_position_control_;
-  bool use_shared_controller_;  // false if using pure teleoperation
-
-private:
-  // initialization
-  void parseParameters();
-  void initializePublishers();
-  void setInitialGripperPose();
-
-  // main operations (supports teleoperate())
-  void getKeyboardInput();
-  void processInput();
-  void publishPose();
-
-  // utility operations (supports processInput())
-  void processInputInPositionControl();
-  void processInputInOrientationControl();
-  RPY convertQuaternionMsgToRPY(const geometry_msgs::Quaternion& quaternion);
-  geometry_msgs::Quaternion convertRPYToQuaternionMsg(const RPY& rpy);
+  bool use_sim_;  // true if running in simulation
+  bool is_stopped_; // true if the program is to be terminated
+  bool is_position_control_;  // true if in position control mode
 };
 
 #endif // #ifndef MARSLITE_CONTROL_CARTESIAN_CONTROL_KEYBOARD_TELEOPERATION_H

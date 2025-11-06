@@ -14,11 +14,6 @@
 #include "utils/tf2_listener_wrapper.h"
 #include "utils/velocity_estimator.h"
 
-enum class RobotOperatingDirection : uint8_t {
-  FRONT = 0,
-  LEFT = 1,
-  RIGHT = 2
-};
 
 class MotionControllerTeleoperation {
  public:
@@ -36,24 +31,34 @@ class MotionControllerTeleoperation {
   explicit MotionControllerTeleoperation(const ros::NodeHandle& nh = ros::NodeHandle());
 
   inline void resetToFrontPose() {
-    this->teleoperateToPose(kFrontInitialGripperPose);
-    this->setRobotOperatingDirection(RobotOperatingDirection::FRONT);
+    const geometry_msgs::PoseStamped target_pose = use_sim_ ?
+        marslite::sim::kFrontInitialGripperPose :
+        marslite::real::kFrontInitialGripperPose;
+    this->teleoperateToPose(target_pose);
+    this->setOperatingDirection(marslite::OperatingDirection::FRONT);
   }
 
   inline void resetToLeftPose() {
-    this->teleoperateToPose(kLeftInitialGripperPose);
-    this->setRobotOperatingDirection(RobotOperatingDirection::LEFT);
+    const geometry_msgs::PoseStamped target_pose = use_sim_ ?
+        marslite::sim::kLeftInitialGripperPose :
+        marslite::real::kLeftInitialGripperPose;
+    this->teleoperateToPose(target_pose);
+    this->setOperatingDirection(marslite::OperatingDirection::LEFT);
   }
 
   inline void resetToRightPose() {
-    this->teleoperateToPose(kRightInitialGripperPose);
-    this->setRobotOperatingDirection(RobotOperatingDirection::RIGHT);
+    // TODO: define kRightInitialGripperPose for simulation
+    // const geometry_msgs::PoseStamped target_pose = use_sim_ ?
+    //     marslite::sim::kRightInitialGripperPose :
+    //     marslite::real::kRightInitialGripperPose;
+    this->teleoperateToPose(marslite::real::kRightInitialGripperPose);
+    this->setOperatingDirection(marslite::OperatingDirection::RIGHT);
   }
 
   void teleoperateToPose(const geometry_msgs::PoseStamped& target_pose);
 
-  inline void setRobotOperatingDirection(
-      const RobotOperatingDirection& direction = RobotOperatingDirection::FRONT) {
+  inline void setOperatingDirection(
+      const marslite::OperatingDirection& direction = marslite::OperatingDirection::FRONT) {
     robot_operating_direction_ = direction;
   }
 
@@ -63,6 +68,10 @@ class MotionControllerTeleoperation {
   void parseParameters();
   void initializePublishers();
   void initializeSubscribers();
+  void leftControllerPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
+  void leftControllerJoyCallback(const sensor_msgs::Joy::ConstPtr& msg);
+  void toggleGripperStatus();
+  void resetPoseSignalCallback(const std_msgs::Bool::ConstPtr& msg);
 
   inline void initializeGripperPose() {
     this->resetPositionalMovement();
@@ -76,10 +85,13 @@ class MotionControllerTeleoperation {
 
   const bool targetPoseIsReached(const geometry_msgs::PoseStamped& target_pose) const;
 
+  void calculateCurrentGripperPose();
+  void calculateGripperVelocity();
+
   inline const bool isAnySafetyButtonPressed() const {
     return is_position_change_enabled_ || is_orientation_change_enabled_;
   }
-
+  
   void calculateDesiredGripperPose();
   void calculateDesiredGripperPosition();
   geometry_msgs::Vector3 getPositionDifference();
@@ -99,10 +111,11 @@ class MotionControllerTeleoperation {
     desired_gripper_pose_.pose.position.x = current_gripper_pose_.pose.position.x + gripper_velocity_.x * 0.01;
     desired_gripper_pose_.pose.position.y = current_gripper_pose_.pose.position.y + gripper_velocity_.y * 0.01;
     desired_gripper_pose_.pose.position.z = current_gripper_pose_.pose.position.z + gripper_velocity_.z * 0.01;
+    gripper_velocity_ = geometry_msgs::Vector3();
 
     // reset user_command_velocity_
     user_command_velocity_estimator_.clear();
-    user_command_velocity_ = geometry_msgs::Vector3();
+    user_command_velocity_ = geometry_msgs::Vector3(); 
   }
 
   inline void resetOrientationalMovement() {
@@ -129,12 +142,6 @@ class MotionControllerTeleoperation {
     mobile_platform_velocity_publisher_.publish(mobile_platform_velocity_);
   }
 
-  void currentGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
-  void leftControllerPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
-  void leftControllerJoyCallback(const sensor_msgs::Joy::ConstPtr& msg);
-  void toggleGripperStatus();
-  void resetPoseSignalCallback(const std_msgs::Bool::ConstPtr& msg);
-
   static inline double restrictAngleWithinPI(const double& angle) {
     if (angle > M_PI) return angle - 2 * M_PI;
     if (angle < -M_PI) return angle + 2 * M_PI;
@@ -157,7 +164,7 @@ class MotionControllerTeleoperation {
   ros::Publisher gripper_velocity_publisher_;
   ros::Publisher gripper_velocity_marker_publisher_;
   
-  ros::Subscriber current_gripper_pose_subscriber_;
+  // ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber left_controller_pose_subscriber_;
   ros::Subscriber left_controller_joy_subscriber_;
   ros::Subscriber reset_pose_signal_subscriber_;
@@ -166,7 +173,7 @@ class MotionControllerTeleoperation {
   geometry_msgs::PoseStamped initial_left_controller_pose_;
   geometry_msgs::PoseStamped current_left_controller_pose_;
   geometry_msgs::PoseStamped initial_gripper_pose_;
-  geometry_msgs::PoseStamped current_gripper_pose_; // updated by lookupCurrentGripperPose()
+  geometry_msgs::PoseStamped current_gripper_pose_;
   geometry_msgs::PoseStamped desired_gripper_pose_;
   geometry_msgs::Vector3 user_command_velocity_;
   geometry_msgs::Vector3 gripper_velocity_;
@@ -181,6 +188,7 @@ class MotionControllerTeleoperation {
   bool is_position_change_enabled_;
   bool is_orientation_change_enabled_;
   bool use_shared_controller_;  // false if using pure teleoperation
+  bool use_sim_;  // true if running in simulation
 
   // parameters
   double position_scale_;
@@ -188,10 +196,11 @@ class MotionControllerTeleoperation {
   double linear_velocity_scale_;
   double angular_velocity_scale_;
 
-  std::mutex mutex_;
-  RobotOperatingDirection robot_operating_direction_;
+  std::mutex mutex_;  // to protect desired_gripper_pose_ from being reset during calculation
+  marslite::OperatingDirection robot_operating_direction_;
   VelocityEstimator user_command_velocity_estimator_;
   VelocityEstimator gripper_velocity_estimator_;
+  Tf2ListenerWrapper tf2_listener_;
 };
 
 #endif // #ifndef MARSLITE_CONTROL_CARTESIAN_CONTROL_MOTION_CONTROLLER_TELEOPERATION_H

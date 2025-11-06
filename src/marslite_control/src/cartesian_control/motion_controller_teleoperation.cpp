@@ -28,10 +28,13 @@ MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHand
 void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseStamped& target_pose) {
   initial_gripper_pose_ = desired_gripper_pose_ = target_pose;
   target_frame_publisher_.publish(target_pose);
+  this->calculateCurrentGripperPose();
   
   // Perform teleoperation until the current gripper pose reaches the target pose
   while (nh_.ok() && !this->targetPoseIsReached(target_pose)) {
     ROS_INFO_STREAM_THROTTLE(5, "Waiting to reach the target pose...");
+
+    this->calculateCurrentGripperPose();
     loop_rate_.sleep();
     ros::spinOnce();
   }
@@ -45,13 +48,17 @@ void MotionControllerTeleoperation::run() {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (this->isAnySafetyButtonPressed()) {
+        this->calculateCurrentGripperPose();
         this->calculateDesiredGripperPose();
+        this->calculateGripperVelocity();
         this->calculateUserCommandVelocity();
       } else {
         this->initializeGripperPose();
         this->initializeLeftControllerPose();
       }
       this->publishDesiredGripperPose();
+      this->publisherGripperVelocity();
+      this->publishGripperVelocityMarker();
       this->publishUserCommandVelocity();
       this->publishUserCommandVelocityMarker();
     } // end mutex scope
@@ -73,12 +80,14 @@ void MotionControllerTeleoperation::parseParameters() {
   pnh.param("linear_velocity_scale", linear_velocity_scale_, 0.15);
   pnh.param("angular_velocity_scale", angular_velocity_scale_, 0.15);
   pnh.param("use_shared_controller", use_shared_controller_, false);
-  ROS_INFO_STREAM("Parameters: " 
+  pnh.param("use_sim", use_sim_, false);
+  ROS_INFO_STREAM(std::boolalpha << "Parameters: " 
       << "\n * position_scale: " << position_scale_
       << "\n * orientation_scale: " << orientation_scale_
       << "\n * linear_velocity_scale: " << linear_velocity_scale_
       << "\n * angular_velocity_scale: " << angular_velocity_scale_
       << "\n * use_shared_controller: " << use_shared_controller_
+      << "\n * use_sim: " << use_sim_
   );
 }
 
@@ -117,10 +126,6 @@ void MotionControllerTeleoperation::initializePublishers() {
 }
 
 void MotionControllerTeleoperation::initializeSubscribers() {
-  current_gripper_pose_subscriber_ = nh_.subscribe(
-      "/marslite_control/gripper_pose", 1,
-      &MotionControllerTeleoperation::currentGripperPoseCallback, this
-  );
   left_controller_pose_subscriber_ = nh_.subscribe(
       "/unity/controller/left/pose", 1,
       &MotionControllerTeleoperation::leftControllerPoseCallback, this
@@ -133,6 +138,103 @@ void MotionControllerTeleoperation::initializeSubscribers() {
       "/marslite_control/lock_state_signal", 1,
       &MotionControllerTeleoperation::resetPoseSignalCallback, this
   );
+}
+
+void MotionControllerTeleoperation::leftControllerPoseCallback(
+    const geometry_msgs::PoseStamped::ConstPtr& msg) {
+  current_left_controller_pose_.header.frame_id = "base_link";
+  current_left_controller_pose_.header.stamp = ros::Time::now();
+  current_left_controller_pose_.pose = msg->pose;
+}
+
+void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs::Joy::ConstPtr& msg) {
+  switch (msg->axes.size()) {
+    case 4:
+      // [3] primary hand trigger: Enable/disable orientational change
+      is_orientation_change_enabled_ = (msg->axes[3] > kTriggerThreshold);
+      orientation_safety_button_signal_.data = is_orientation_change_enabled_;
+      orientation_safety_button_signal_publisher_.publish(orientation_safety_button_signal_);
+    case 3:
+      // [2] primary index trigger: Enable/disable positional change
+      is_position_change_enabled_ = (msg->axes[2] > kTriggerThreshold);
+      position_safety_button_signal_.data = is_position_change_enabled_;
+      position_safety_button_signal_publisher_.publish(position_safety_button_signal_);
+    case 2:
+      // [1] horizontal axis: Turn left/right
+      mobile_platform_velocity_.angular.z = std::abs(msg->axes[1]) > 0.8 ?
+          msg->axes[1] * angular_velocity_scale_ : 0.0;
+    case 1:
+      // [0] vertical axis: Move forward/backward
+      mobile_platform_velocity_.linear.x = std::abs(msg->axes[0]) > 0.8 ?
+          msg->axes[0] * linear_velocity_scale_ : 0.0;
+      break;
+    default:
+      ROS_WARN_ONCE("Mismatch number of left joystick axes (%lu).", msg->axes.size());
+      ROS_WARN_ONCE("  Please check your joystick(s) setup or rosbridge connection.");
+      break;
+  }
+
+  switch (msg->buttons.size()) {
+    case 2:
+      // [1] Y button: Send `record_signal` to `shared_control`
+      if (msg->buttons[1] == 1) {
+        record_signal_.data = true;
+        record_signal_publisher_.publish(record_signal_);
+      }
+    case 1:
+      // [0] X button: Close/Open the gripper
+      if (msg->buttons[0] == 1) {
+        this->toggleGripperStatus();
+      }
+      break;
+    default:
+      ROS_WARN_ONCE("Mismatch number of left joystick buttons (%lu).", msg->buttons.size());
+      ROS_WARN_ONCE("  Please check your joystick(s) setup or rosbridge connection.");
+      break;
+  }
+}
+
+void MotionControllerTeleoperation::toggleGripperStatus() {
+  static ros::Time last_toggle_time = ros::Time(0);
+  ros::Time current_time = ros::Time::now();
+  if ((current_time - last_toggle_time).toSec() > 0.5) {
+    desired_gripper_status_.data = !desired_gripper_status_.data;
+    if (desired_gripper_status_.data) {
+      ROS_INFO("Close the gripper");
+    } else {
+      ROS_INFO("Open the gripper");
+    }
+    gripper_status_publisher_.publish(desired_gripper_status_);
+    last_toggle_time = current_time;
+  }
+}
+
+void MotionControllerTeleoperation::resetPoseSignalCallback(const std_msgs::Bool::ConstPtr& msg) {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    this->initializeGripperPose();
+    this->initializeLeftControllerPose();
+  } // end mutex scope
+}
+
+void MotionControllerTeleoperation::calculateCurrentGripperPose() {
+  const std::string target_frame = use_sim_ ? "robotiq_85_base_link" : "tm_gripper";
+  const geometry_msgs::TransformStamped current_gripper_transform =
+      tf2_listener_.lookupTransform("base_link", target_frame);
+  current_gripper_pose_.header = current_gripper_transform.header;
+  current_gripper_pose_.pose.position.x = current_gripper_transform.transform.translation.x;
+  current_gripper_pose_.pose.position.y = current_gripper_transform.transform.translation.y;
+  current_gripper_pose_.pose.position.z = current_gripper_transform.transform.translation.z;
+  current_gripper_pose_.pose.orientation = current_gripper_transform.transform.rotation;
+}
+
+void MotionControllerTeleoperation::calculateGripperVelocity() {
+  geometry_msgs::PointStamped waypoint;
+  waypoint.header = current_gripper_pose_.header;
+  waypoint.point = current_gripper_pose_.pose.position;
+  gripper_velocity_estimator_.addWaypoint(waypoint);
+  gripper_velocity_estimator_.estimateVelocity();
+  gripper_velocity_ = gripper_velocity_estimator_.getEstimatedVelocity();
 }
 
 void MotionControllerTeleoperation::calculateDesiredGripperPose() {
@@ -206,7 +308,7 @@ geometry_msgs::Vector3 MotionControllerTeleoperation::scalePositionDifference(
 void MotionControllerTeleoperation::applyPositionDifference(
     const geometry_msgs::Vector3& scaled_position_difference) {
   switch (robot_operating_direction_) {
-    case RobotOperatingDirection::FRONT:
+    case marslite::OperatingDirection::FRONT:
       // | controller |   gripper  |
       // |------------|------------|
       // | front/back | front/back |
@@ -216,7 +318,7 @@ void MotionControllerTeleoperation::applyPositionDifference(
       desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.y;
       desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
       break;
-    case RobotOperatingDirection::LEFT:
+    case marslite::OperatingDirection::LEFT:
       // | controller |   gripper  |
       // |------------|------------|
       // | front/back | left/right |
@@ -226,7 +328,7 @@ void MotionControllerTeleoperation::applyPositionDifference(
       desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.x;
       desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
       break;
-    case RobotOperatingDirection::RIGHT:
+    case marslite::OperatingDirection::RIGHT:
       // | controller |   gripper  |
       // |------------|------------|
       // | front/back | right/left |
@@ -434,96 +536,4 @@ void MotionControllerTeleoperation::publishGripperVelocityMarker() {
   marker.color.b = 0.5f;
   marker.color.a = 1.0f;
   gripper_velocity_marker_publisher_.publish(marker);
-}
-
-void MotionControllerTeleoperation::currentGripperPoseCallback(
-    const geometry_msgs::PoseStamped::ConstPtr& msg) {
-  // previous_gripper_pose_ = current_gripper_pose_;
-  current_gripper_pose_ = *msg;
-
-  geometry_msgs::PointStamped waypoint;
-  waypoint.header = current_gripper_pose_.header;
-  waypoint.point = current_gripper_pose_.pose.position;
-  gripper_velocity_estimator_.addWaypoint(waypoint);
-  gripper_velocity_estimator_.estimateVelocity();
-  gripper_velocity_ = gripper_velocity_estimator_.getEstimatedVelocity();
-  this->publisherGripperVelocity();
-  this->publishGripperVelocityMarker();
-}
-
-void MotionControllerTeleoperation::leftControllerPoseCallback(
-    const geometry_msgs::PoseStamped::ConstPtr& msg) {
-  current_left_controller_pose_.header.frame_id = "base_link";
-  current_left_controller_pose_.header.stamp = ros::Time::now();
-  current_left_controller_pose_.pose = msg->pose;
-}
-
-void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs::Joy::ConstPtr& msg) {
-  switch (msg->axes.size()) {
-    case 4:
-      // [3] primary hand trigger: Enable/disable orientational change
-      is_orientation_change_enabled_ = (msg->axes[3] > kTriggerThreshold);
-      orientation_safety_button_signal_.data = is_orientation_change_enabled_;
-      orientation_safety_button_signal_publisher_.publish(orientation_safety_button_signal_);
-    case 3:
-      // [2] primary index trigger: Enable/disable positional change
-      is_position_change_enabled_ = (msg->axes[2] > kTriggerThreshold);
-      position_safety_button_signal_.data = is_position_change_enabled_;
-      position_safety_button_signal_publisher_.publish(position_safety_button_signal_);
-    case 2:
-      // [1] horizontal axis: Turn left/right
-      mobile_platform_velocity_.angular.z = std::abs(msg->axes[1]) > 0.8 ?
-          msg->axes[1] * angular_velocity_scale_ : 0.0;
-    case 1:
-      // [0] vertical axis: Move forward/backward
-      mobile_platform_velocity_.linear.x = std::abs(msg->axes[0]) > 0.8 ?
-          msg->axes[0] * linear_velocity_scale_ : 0.0;
-      break;
-    default:
-      ROS_WARN_ONCE("Mismatch number of left joystick axes (%lu).", msg->axes.size());
-      ROS_WARN_ONCE("  Please check your joystick(s) setup or rosbridge connection.");
-      break;
-  }
-
-  switch (msg->buttons.size()) {
-    case 2:
-      // [1] Y button: Send `record_signal` to `shared_control`
-      if (msg->buttons[1] == 1) {
-        record_signal_.data = true;
-        record_signal_publisher_.publish(record_signal_);
-      }
-    case 1:
-      // [0] X button: Close/Open the gripper
-      if (msg->buttons[0] == 1) {
-        this->toggleGripperStatus();
-      }
-      break;
-    default:
-      ROS_WARN_ONCE("Mismatch number of left joystick buttons (%lu).", msg->buttons.size());
-      ROS_WARN_ONCE("  Please check your joystick(s) setup or rosbridge connection.");
-      break;
-  }
-}
-
-void MotionControllerTeleoperation::toggleGripperStatus() {
-  static ros::Time last_toggle_time = ros::Time(0);
-  ros::Time current_time = ros::Time::now();
-  if ((current_time - last_toggle_time).toSec() > 0.5) {
-    desired_gripper_status_.data = !desired_gripper_status_.data;
-    if (desired_gripper_status_.data) {
-      ROS_INFO("Close the gripper");
-    } else {
-      ROS_INFO("Open the gripper");
-    }
-    gripper_status_publisher_.publish(desired_gripper_status_);
-    last_toggle_time = current_time;
-  }
-}
-
-void MotionControllerTeleoperation::resetPoseSignalCallback(const std_msgs::Bool::ConstPtr& msg) {
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    this->initializeGripperPose();
-    this->initializeLeftControllerPose();
-  } // end mutex scope
 }

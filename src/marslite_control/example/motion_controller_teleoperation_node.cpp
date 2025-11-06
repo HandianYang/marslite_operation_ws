@@ -1,5 +1,4 @@
 #include "cartesian_control/motion_controller_teleoperation.h"
-#include "cartesian_control/kinematics_constants.h"
 
 int main(int argc, char **argv)
 {

@@ -12,6 +12,7 @@
 SharedControl::SharedControl(const ros::NodeHandle& nh)
     : nh_(nh), rate_(ros::Rate(10)), begin_recording_(false), 
       intent_inference_(0.1) {
+  this->parseParameters();
   this->initializePublishers();
   this->initializeSubscribers();
 }
@@ -22,6 +23,7 @@ SharedControl::SharedControl(const ros::NodeHandle& nh)
 
 void SharedControl::run() {
   while (nh_.ok()) {
+    this->updateCurrentGripperPositionForIntentInference();
     intent_inference_.updateBelief();
     this->publishIntentBeliefVisualization();
     this->publishBlendingGripperPose();
@@ -34,6 +36,11 @@ void SharedControl::run() {
 /******************************************************
  *                  Private members                   *  
  ****************************************************** */
+
+void SharedControl::parseParameters() {
+  ros::NodeHandle pnh("~");
+  pnh.param("use_sim", use_sim_, false);
+}
 
 void SharedControl::initializePublishers() {
   desired_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
@@ -54,10 +61,10 @@ void SharedControl::initializePublishers() {
 }
 
 void SharedControl::initializeSubscribers() {
-  current_gripper_pose_subscriber_ = nh_.subscribe(
-      "/marslite_control/gripper_pose", 1,
-      &SharedControl::currentGripperPoseCallback, this
-  );
+  // current_gripper_pose_subscriber_ = nh_.subscribe(
+  //     "/marslite_control/gripper_pose", 1,
+  //     &SharedControl::currentGripperPoseCallback, this
+  // );
   detected_objects_subscriber_ = nh_.subscribe(
       "/yolo/detected_objects", 1,
       &SharedControl::detectedObjectsCallback, this
@@ -88,57 +95,11 @@ void SharedControl::initializeSubscribers() {
   );
 }
 
-void SharedControl::publishIntentBeliefVisualization() {
-  visualization_msgs::MarkerArray belief_visualization
-      = intent_inference_.getBeliefVisualization();
-  belief_visualization_publisher_.publish(belief_visualization);
-}
-
-void SharedControl::publishBlendingGripperPose() {
-  geometry_msgs::PoseStamped target_pose = this->getTargetPose();
-  if (target_pose.header.frame_id.empty())  return;
-  desired_gripper_pose_publisher_.publish(target_pose);
-}
-
-geometry_msgs::PoseStamped SharedControl::getTargetPose() {
-  if (intent_inference_.isInLockedState()) {
-    is_previously_locked_ = true;
-    
-    geometry_msgs::PoseStamped target_pose;
-    target_pose.header.frame_id = "base_link";
-    target_pose.header.stamp = ros::Time::now();
-    target_pose.pose.position = this->getTargetPosition();
-    target_pose.pose.orientation = this->getTargetOrientation();
-    return target_pose;
-  }
-
-  if (is_previously_locked_) {
-    // LOCK to UNLOCK transition
-    std_msgs::Bool reset_pose_signal_;
-    reset_pose_signal_publisher_.publish(reset_pose_signal_);
-  }
-  is_previously_locked_ = false;
-  return user_desired_gripper_pose_;
-}
-
-geometry_msgs::Point SharedControl::getTargetPosition() {
-  return intent_inference_.getPlannedPosition();
-}
-
-geometry_msgs::Quaternion SharedControl::getTargetOrientation() {
-  geometry_msgs::Vector3 target_direction = intent_inference_.getTargetDirection();
-  RPY target_orientation;
-  target_orientation.roll = M_PI / 2;
-  target_orientation.pitch = 0;
-  target_orientation.yaw = M_PI / 2 + std::atan2(target_direction.y, target_direction.x);
-  return target_orientation.convertToQuaternion();
-}
-
-void SharedControl::currentGripperPoseCallback(
-    const geometry_msgs::PoseStamped::ConstPtr& msg) {
-  current_gripper_pose_ = *msg;
-  intent_inference_.setGripperPosition(current_gripper_pose_.pose.position);
-}
+// void SharedControl::currentGripperPoseCallback(
+//     const geometry_msgs::PoseStamped::ConstPtr& msg) {
+//   current_gripper_pose_ = *msg;
+//   intent_inference_.setGripperPosition(current_gripper_pose_.pose.position);
+// }
 
 void SharedControl::detectedObjectsCallback(
     const detection_msgs::DetectedObjectArray::ConstPtr& objects) {
@@ -151,6 +112,7 @@ void SharedControl::detectedObjectsCallback(
 void SharedControl::recordSignalCallback(
     const std_msgs::Bool::ConstPtr& signal) {
   begin_recording_ = true;
+  // TODO: Remove this test code later
   { // test scope
     detection_msgs::DetectedObject object1;
     object1.label = "object1";
@@ -202,4 +164,62 @@ void SharedControl::userDesiredGripperStatusCallback(
 void SharedControl::userCommandVelocityCallback(
     const geometry_msgs::Vector3::ConstPtr& user_command_velocity) {
   intent_inference_.setUserCommandVelocity(*user_command_velocity);
+}
+
+void SharedControl::updateCurrentGripperPositionForIntentInference() {
+  const std::string target_frame = use_sim_ ? "robotiq_85_base_link" : "tm_gripper";
+  const geometry_msgs::TransformStamped current_gripper_transform =
+      tf2_listener_.lookupTransform("base_link", target_frame);
+  
+  geometry_msgs::Point current_gripper_position;
+  current_gripper_position.x = current_gripper_transform.transform.translation.x;
+  current_gripper_position.y = current_gripper_transform.transform.translation.y;
+  current_gripper_position.z = current_gripper_transform.transform.translation.z;
+  intent_inference_.setGripperPosition(current_gripper_position);
+}
+
+void SharedControl::publishIntentBeliefVisualization() {
+  visualization_msgs::MarkerArray belief_visualization
+      = intent_inference_.getBeliefVisualization();
+  belief_visualization_publisher_.publish(belief_visualization);
+}
+
+void SharedControl::publishBlendingGripperPose() {
+  geometry_msgs::PoseStamped target_pose = this->getTargetPose();
+  if (target_pose.header.frame_id.empty())  return;
+  desired_gripper_pose_publisher_.publish(target_pose);
+}
+
+geometry_msgs::PoseStamped SharedControl::getTargetPose() {
+  if (intent_inference_.isInLockedState()) {
+    is_previously_locked_ = true;
+    
+    geometry_msgs::PoseStamped target_pose;
+    target_pose.header.frame_id = "base_link";
+    target_pose.header.stamp = ros::Time::now();
+    target_pose.pose.position = this->getTargetPosition();
+    target_pose.pose.orientation = this->getTargetOrientation();
+    return target_pose;
+  }
+
+  if (is_previously_locked_) {
+    // LOCK to UNLOCK transition
+    std_msgs::Bool reset_pose_signal_;
+    reset_pose_signal_publisher_.publish(reset_pose_signal_);
+  }
+  is_previously_locked_ = false;
+  return user_desired_gripper_pose_;
+}
+
+geometry_msgs::Point SharedControl::getTargetPosition() {
+  return intent_inference_.getPlannedPosition();
+}
+
+geometry_msgs::Quaternion SharedControl::getTargetOrientation() {
+  geometry_msgs::Vector3 target_direction = intent_inference_.getTargetDirection();
+  RPY target_orientation;
+  target_orientation.roll = M_PI / 2;
+  target_orientation.pitch = 0;
+  target_orientation.yaw = M_PI / 2 + std::atan2(target_direction.y, target_direction.x);
+  return target_orientation.convertToQuaternion();
 }

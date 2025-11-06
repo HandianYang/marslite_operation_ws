@@ -7,7 +7,6 @@
   <arg name="gui" default="true"/>
   <arg name="headless" default="false"/>
   <arg name="debug" default="false"/>
-
   <include file="$(find gazebo_ros)/launch/empty_world.launch">
     <arg name="world_name" value="$(arg world_name)"/>
     <arg name="debug" value="$(arg debug)" />
@@ -20,12 +19,13 @@
   <!-- Spawn the robot -->
   <arg name="laser_enabled" default="true" />
   <arg name="realsense_enabled" default="false" />
-  
+  <arg name="use_cartesian_controller" default="false" />  <!-- `false` if using Moveit! controller -->
   <include file="$(find marslite_simulation)/launch/spawn_mars.launch">
     <arg name="laser_enabled" value="$(arg laser_enabled)" />
     <arg name="realsense_enabled" value="$(arg realsense_enabled)" />
-    <arg name="robot_init_x" value="2.0" />
-    <arg name="robot_init_y" value="1.5" />
+    <arg name="robot_init_x" value="3.5" />
+    <arg name="robot_init_y" value="-0.7" />
+    <arg name="use_cartesian_controller" value="$(arg use_cartesian_controller)" /> 
   </include>
 
 </launch>
