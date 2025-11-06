@@ -1,6 +1,8 @@
-# Marslite Operation ROS Workspace 
+# MARS-lite Operation ROS Workspace 
 
-<!-- ## Prerequisites
+This ROS workspace provides robot operations for MARS-lite robots, such as navigation and robotic arm control.
+
+## Prerequisites
 
 ### Hardware (PC)
 - CUDA 12.1-capable GPU
@@ -13,106 +15,92 @@
 
 ## Setup
 
-### 1. Pull the specified Docker image from Docker Hub
+### Docker setup
 
-```bash
-docker pull handianyang/marslite_operation:cuda12.1.1-pytorch2.5.1-noetic-v1.0.0
-```
+The environment for this workspace was built using Docker.
 
-**(OPTIONAL)** You can find more details (installed package list, tag list, etc.) on [Docker Hub](https://hub.docker.com/repository/docker/handianyang/marslite-operation/general).
+#### Enter Docker container
 
-### 2. Enter the Docker container
+Create a Docker container named `marslite-operation` based on Docker image `handianyang/marslite-operation:ros1-noetic`, and enter this container:
 
-
-Under the root directory of the workspace:
 ```bash
 source docker_run.sh
 ```
 
-This command finds container named with `marslite` and brings you in. If the `marsltie` container does not exist, then it creates a new container.
+If the container with name `marslite-operation` already exists, it will be reopened.
+
+Aditionally, you can find more details (installed package list, tag list, etc.) on [Docker Hub](https://hub.docker.com/repository/docker/handianyang/marslite-operation/general).
 
 
-### 3. (For `product_detection` package ONLY) Enter Python 3.10-based virtual environment
+#### Remove Docker container
 
-(INSIDE container) Activate the virtual environment:
 ```bash
-# [alias] py
-source ~/venv-3-10/bin/activate
+docker rm marslite-operation
 ```
 
-**[NOTE] Because ROS Noetic packages are compiled against Python 3.8, ROS nodes cannot be compiled and executed under Python 3.10-based virtual environment. Therefore, the Python scripts in `product_detection` are treated as normal Python scripts rather than ROS nodes.** 
+### MARS-lite robot bringup
 
-## Development
+#### Normal bringup
 
-### (Recommended) Use `tmux` interface
-
-After entering the container, simply type `tmux` to enter the tmux interface.
 ```bash
-tmux
+# on MARS-lite
+
 ```
 
-Some frequently used `tmux` shortcuts are listed here:
-- Split the current pane with a horizontal line: `Ctrl+b` `"`
-- Split the current pane with a vertical line: `Ctrl+b` `%`
-- Switch to pane to the given direction:
-    - `Ctrl+b` $\uparrow$
-    - `Ctrl+b` $\downarrow$
-    - `Ctrl+b` $\leftarrow$
-    - `Ctrl+b` $\rightarrow$
-- Resize current pane:
-    - `Ctrl+b+`$\uparrow$ or `Ctrl+b` `Ctrl+`$\uparrow$
-    - `Ctrl+b+`$\downarrow$ or `Ctrl+b` `Ctrl+`$\downarrow$
-    - `Ctrl+b+`$\leftarrow$ or `Ctrl+b` `Ctrl+`$\leftarrow$
-    - `Ctrl+b+`$\rightarrow$ or `Ctrl+b` `Ctrl+`$\rightarrow$
-- Close current pane: `Ctrl+b` `x` (or type `exit` command)
+#### Bringup with cartesian controllers
 
-- Enter copy mode (mouse/keyboard scrolling and copying allowed): `Ctrl+b` `[`
-- Quit the copy mode: `q`
-
-For more `tmux` commands, please refer to the [tmux command cheat sheet](https://tmuxcheatsheet.com/).
-
-### Build the ROS workspace
-
-(INSIDE container) Under the root of the workspace:
 ```bash
-# [alias] cm
-catkin_make
-```
-
-### Source the ROS workspace bash script
-
-(INSIDE container) Under the root of the workspace:
-```bash
-# [alias] sd
+# on MARS-lite
+cd /home/kyyoung/cartesian_controller_ws
 source devel/setup.bash
+roslaunch controller_bringup motion_controller_bringup.launch 
 ```
 
-###  Remove the Docker container
+### MARS-lite robot simulation setup
 
-If you somehow **mess up with the existing container** (e.g. having trouble `apt-get update`), one option is to give up any changes you have made in this contaminated container.
+#### Bringup with Moveit! controller
 
-(OUTSIDE container) Run the following command to remove the container named `marslite`:
 ```bash
-docker rm marslite
+# on Docker container
+# under /home/developer/marslite_operation_ws 
+source devel/setup.bash
+source export_gazebo_simulation_model.sh
+roslaunch marslite_simulation gazebo_supermarket.launch
 ```
 
-[NOTE] Change the container name in the command accordingly if you've changed it in `docker_run.sh`.
+#### Bringup with cartesian controller
 
+**(Run once on first use)** Install `cartesian_controllers` ROS package from GitHub:
+```bash
+# on Docker container
+# under /home/developer/marslite_operation_ws/src
+apt update
+git clone -b ros1 https://github.com/fzi-forschungszentrum-informatik/cartesian_controllers.git
+rosdep install --from-paths ./ --ignore-src -y
+cd ..
+catkin_make -DCMAKE_BUILD_TYPE=Release
+```
+
+Bringup with cartesian controller:
+```bash
+# on Docker container
+# under /home/developer/marslite_operation_ws
+source devel/setup.bash
+source export_gazebo_simulation_model.sh
+roslaunch marslite_simulation gazebo_supermarket.launch use_cartesian_controller:=true
+```
 
 ## Instructions
 
-[NOTE] Every command should be executed INSIDE the container.
+### Robotic arm control
 
-### Launch ROS-sharp communication
+#### Launch Moveit! control interface
 
-**[Purpose]** To connect to Unity through WebSocket
 ```bash
-roslaunch file_server ros_sharp_communication.launch
+roslaunch marslite_simulation moveit_planning_gz.launch
 ```
 
-###  (Simulation ONLY)Launch Gazebo world
-
-1. Launch a **Gazebo world of supermarket environment** with Marslite robot:
+<!-- 1. Launch a **Gazebo world of supermarket environment** with Marslite robot:
     ```bash
     roslaunch mars_lite_description gazebo_supermarket.launch
     ```
@@ -126,35 +114,25 @@ roslaunch file_server ros_sharp_communication.launch
     ```bash
     roslaunch mars_lite_description spawn_mars.launch
     ```
-    **[NOTE] This SHALL NOT be launched with `gazebo_supermarket.launch`.**
+    **[NOTE] This SHALL NOT be launched with `gazebo_supermarket.launch`.** -->
 
 
-### Navigation features
+### Navigation
 
-1. Launch **SLAM** using 'gmapping' method:
-    ```bash
-    roslaunch marslite_navigation slam_gmapping.launch
-    ```
+#### Launch SLAM using gmapping method
 
-2. Launch **navigation** module using A* and DWA path-planning algorithm:
-    ```bash
-    roslaunch marslite_navigation navigation.launch
-    ```
+```bash
+roslaunch marslite_navigation slam_gmapping.launch
+```
 
-3. Directly drive the robot with keyboard inputs:
-    ```bash
-    roslaunch marslite_navigation teleop_keyboard.launch
-    ```
+#### Launch AMCL and navigation module using A* and DWA path-planning algorithm
 
-4. Directly drive the robot with joystick inputs:
-    ```bash
-    roslaunch marslite_navigation teleop_joystick.launch
-    ```
+```bash
+roslaunch marslite_navigation navigation.launch
+```
 
+#### Launch mobile platform teleoperation using keyboard inputs
 
-### Robotic arm control
-
-1. Launch the Moveit! control interface
-    ```bash
-    roslaunch mars_lite_moveit_config mars_lite_moveit_planning_execution_gz.launch
-    ``` -->
+```bash
+roslaunch marslite_navigation teleop_keyboard.launch
+```
