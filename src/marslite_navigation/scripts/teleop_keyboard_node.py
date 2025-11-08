@@ -134,10 +134,12 @@ if __name__=="__main__":
     if os.name != 'nt':
         settings = termios.tcgetattr(sys.stdin)
 
-    rospy.init_node('turtlebot3_teleop')
-    pub = rospy.Publisher('cmd_vel', Twist, queue_size=10)
-
+    rospy.init_node('teleop_keyboard_node')
     turtlebot3_model = rospy.get_param("model", "burger")
+    use_sim = rospy.get_param("use_sim", False)
+
+    velocity_topic = '/cmd_vel' if use_sim else '/mob_plat/cmd_vel'
+    pub = rospy.Publisher(velocity_topic, Twist, queue_size=10)
 
     status = 0
     target_linear_vel   = 0.0
