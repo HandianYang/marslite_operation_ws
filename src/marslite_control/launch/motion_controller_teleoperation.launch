@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
   <include file="$(find file_server)/launch/ros_sharp_communication.launch"/>
-  <remap from="/cartesian_control/target_frame" to="/marslite_cartesian_motion_controller/target_frame"/>
+  <!-- <remap from="/cartesian_control/target_frame" to="/marslite_cartesian_motion_controller/target_frame"/> -->
 
   <arg name="position_scale" default="0.8"/>
   <arg name="orientation_scale" default="0.8"/>
@@ -18,9 +18,4 @@
     <param name="use_shared_controller" value="$(arg use_shared_controller)"/>
     <param name="use_sim" value="$(arg use_sim)"/>
   </node>
-
-  <!-- <node name="gripper_pose_publisher_node" pkg="marslite_control"
-        type="gripper_pose_publisher_node" output="screen">
-    <param name="use_sim" value="$(arg use_sim)"/>
-  </node> -->
 </launch>

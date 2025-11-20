@@ -54,7 +54,7 @@ void KeyboardTeleoperation::parseParameters() {
 }
 
 void KeyboardTeleoperation::initializePublishers() {
-  const std::string gripper_pose_topic = "/cartesian_control/target_frame";
+  const std::string gripper_pose_topic = "/target_frame";
   const std::string gripper_status_topic = "/gripper/cmd_gripper";
   desired_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(gripper_pose_topic, 1);
   desired_gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(gripper_status_topic, 1);

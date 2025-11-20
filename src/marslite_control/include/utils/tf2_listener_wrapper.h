@@ -19,7 +19,7 @@ public:
           target_frame, source_frame, ros::Time(0), ros::Duration(1.0));
     }
     catch (tf2::TransformException &ex) {
-      ROS_WARN("%s. Return empty TransformStamped() instead.", ex.what());
+      ROS_WARN("%s Return empty TransformStamped() instead.", ex.what());
     }
     return transform_stamped;
   }

@@ -45,10 +45,10 @@ void MotionControllerTeleoperation::run() {
   this->initializeGripperPose();
   this->initializeLeftControllerPose();
   while (nh_.ok()) {
+    this->calculateCurrentGripperPose();
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (this->isAnySafetyButtonPressed()) {
-        this->calculateCurrentGripperPose();
         this->calculateDesiredGripperPose();
         this->calculateGripperVelocity();
         this->calculateUserCommandVelocity();
@@ -93,14 +93,14 @@ void MotionControllerTeleoperation::parseParameters() {
 
 void MotionControllerTeleoperation::initializePublishers() {
   target_frame_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
-      "/cartesian_control/target_frame", 1);
+      "/target_frame", 1);
   // The desired gripper pose will be published to different topics according
   // to the `use_shared_controller_` parameter.
   // - use_shared_controller_ = true: published to shared controller
   // - use_shared_controller_ = false: published to the robot
   const std::string gripper_pose_topic = use_shared_controller_ ?
       "/marslite_control/user_desired_gripper_pose" :
-      "/cartesian_control/target_frame";
+      "/target_frame";
   const std::string gripper_status_topic = use_shared_controller_ ?
       "/marslite_control/user_desired_gripper_status" :
       "/gripper/cmd_gripper";

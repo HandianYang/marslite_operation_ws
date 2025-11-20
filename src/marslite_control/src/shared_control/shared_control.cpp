@@ -44,7 +44,7 @@ void SharedControl::parseParameters() {
 
 void SharedControl::initializePublishers() {
   desired_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
-      "/cartesian_control/target_frame", 1
+      "/target_frame", 1
   );
   desired_gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(
       "/gripper/cmd_gripper", 1
@@ -94,12 +94,6 @@ void SharedControl::initializeSubscribers() {
       &SharedControl::userCommandVelocityCallback, this
   );
 }
-
-// void SharedControl::currentGripperPoseCallback(
-//     const geometry_msgs::PoseStamped::ConstPtr& msg) {
-//   current_gripper_pose_ = *msg;
-//   intent_inference_.setGripperPosition(current_gripper_pose_.pose.position);
-// }
 
 void SharedControl::detectedObjectsCallback(
     const detection_msgs::DetectedObjectArray::ConstPtr& objects) {

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <remap from="/cartesian_control/target_frame" to="/marslite_cartesian_motion_controller/target_frame"/>
+  <!-- <remap from="/cartesian_control/target_frame" to="/marslite_cartesian_motion_controller/target_frame"/> -->
 
   <arg name="use_sim" default="false"/>
   <node name="keyboard_teleoperation_node" pkg="marslite_control"

@@ -249,19 +249,19 @@ void IntentInference::updateGripperMotionState() {
       break;
       case GripperMotionState::LOCKED:
         if (this->isAwayFromTarget()) {
-          ROS_INFO_STREAM("LOCKED to RETREATED. is_cooldown_timer_started_: " << is_cooldown_timer_started_);
+          // ROS_INFO_STREAM("LOCKED to RETREATED. is_cooldown_timer_started_: " << is_cooldown_timer_started_);
           gripper_motion_state_ = GripperMotionState::RETREATED;
         }
         // else: remain LOCKED
       break;
       case GripperMotionState::RETREATED:
         if (!is_cooldown_timer_started_) {
-          ROS_INFO("RETREATED cooldown started");
+          // ROS_INFO("RETREATED cooldown started");
           this->triggerCooldownTimer();
           is_cooldown_timer_started_ = true;
         }
         if (this->isCooldownTimePassed()) {
-          ROS_INFO("RETREATED to UNLOCKED");
+          // ROS_INFO("RETREATED to UNLOCKED");
           gripper_motion_state_ = GripperMotionState::UNLOCKED;
           is_cooldown_timer_started_ = false;
         }
@@ -270,7 +270,7 @@ void IntentInference::updateGripperMotionState() {
       default: break;
     }
   }
-  ROS_INFO_STREAM("New state: " << toString(gripper_motion_state_));
+  // ROS_INFO_STREAM("New state: " << toString(gripper_motion_state_));
 }
 
 void IntentInference::calculatePlannedPositionAndTargetDirection() {
