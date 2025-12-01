@@ -107,7 +107,7 @@ class IntentInference {
   }
 
   inline geometry_msgs::Point getMostLikelyGoalPosition() const {
-    return position_to_base_link_.at(this->getMostLikelyGoal());
+    return position_to_tm_base_.at(this->getMostLikelyGoal());
   }
 
   /**
@@ -147,7 +147,7 @@ class IntentInference {
  private:
   void updatePositionToBaseLink();
   
-  geometry_msgs::Point transformOdomToBaseLink(const geometry_msgs::Point& point_in_odom);
+  geometry_msgs::Point transformOdomToTMBase(const geometry_msgs::Point& point_in_odom);
 
   /**
    * @brief Update `gripper_motion_state_` mainly; update `planned_position_`
@@ -255,7 +255,7 @@ class IntentInference {
   std_msgs::Bool gripper_status_;
   detection_msgs::DetectedObjectArray recorded_objects_;
   detection_msgs::ObjectBeliefMap belief_;
-  detection_msgs::ObjectPositionMap position_to_base_link_;
+  detection_msgs::ObjectPositionMap position_to_tm_base_;
   Tf2ListenerWrapper tf2_listener_;
   GripperMotionState gripper_motion_state_;
   GripperMotionState last_gripper_motion_state_;

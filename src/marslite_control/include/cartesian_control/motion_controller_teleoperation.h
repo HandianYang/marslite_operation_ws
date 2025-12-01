@@ -9,7 +9,6 @@
 #include <std_msgs/Bool.h>
 #include <mutex>
 
-#include "cartesian_control/kinematics_constants.h"
 #include "utils/rpy.h"
 #include "utils/tf2_listener_wrapper.h"
 #include "utils/velocity_estimator.h"
@@ -22,49 +21,45 @@ class MotionControllerTeleoperation {
   // tolerance for considering two positions are the same
   static inline constexpr double kPositionTolerance = 1e-3;
   // tolerance for considering two orientations are the same (in terms of quaternion)
-  static inline constexpr double kOrientationTolerance = 1e-3;
+  static inline constexpr double kOrientationTolerance = 0.01;
   // buffer size for velocity estimator
   static inline constexpr size_t kEstimatorBufferSize = 10;
   // minimum speed for velocity estimator
   static inline constexpr double kEstimatorMinSpeed = 1e-2;
+  // [m] fixed Y offset for initial gripper pose
+  static inline constexpr double kGripperPoseYOffset = -0.122;
 
   explicit MotionControllerTeleoperation(const ros::NodeHandle& nh = ros::NodeHandle());
 
+  geometry_msgs::PoseStamped generateInitialGripperPose(const double& first_joint_yaw = 0.0);
+
   inline void resetToFrontPose() {
-    const geometry_msgs::PoseStamped target_pose = use_sim_ ?
-        marslite::sim::kFrontInitialGripperPose :
-        marslite::real::kFrontInitialGripperPose;
-    this->teleoperateToPose(target_pose);
-    this->setOperatingDirection(marslite::OperatingDirection::FRONT);
+    this->teleoperateToPose(this->generateInitialGripperPose(0.0));
   }
 
   inline void resetToLeftPose() {
-    const geometry_msgs::PoseStamped target_pose = use_sim_ ?
-        marslite::sim::kLeftInitialGripperPose :
-        marslite::real::kLeftInitialGripperPose;
-    this->teleoperateToPose(target_pose);
-    this->setOperatingDirection(marslite::OperatingDirection::LEFT);
+    this->teleoperateToPose(this->generateInitialGripperPose(M_PI / 2));
+  }
+
+  inline void resetToLeftFrontPose() {        
+    this->teleoperateToPose(this->generateInitialGripperPose(M_PI / 4));
   }
 
   inline void resetToRightPose() {
-    // TODO: define kRightInitialGripperPose for simulation
-    // const geometry_msgs::PoseStamped target_pose = use_sim_ ?
-    //     marslite::sim::kRightInitialGripperPose :
-    //     marslite::real::kRightInitialGripperPose;
-    this->teleoperateToPose(marslite::real::kRightInitialGripperPose);
-    this->setOperatingDirection(marslite::OperatingDirection::RIGHT);
+    this->teleoperateToPose(this->generateInitialGripperPose(-M_PI / 2));
   }
 
   void teleoperateToPose(const geometry_msgs::PoseStamped& target_pose);
 
-  inline void setOperatingDirection(
-      const marslite::OperatingDirection& direction = marslite::OperatingDirection::FRONT) {
-    robot_operating_direction_ = direction;
-  }
-
   void run();
 
  private:
+  struct CylindricalPose {
+    double radius;
+    double yaw;
+    double height;
+  };
+
   void parseParameters();
   void initializePublishers();
   void initializeSubscribers();
@@ -77,6 +72,8 @@ class MotionControllerTeleoperation {
     this->resetPositionalMovement();
     this->resetOrientationalMovement();
     initial_gripper_pose_ = desired_gripper_pose_;
+    initial_gripper_cylindrical_pose_ = desired_gripper_cylindrical_pose_
+                                      = current_gripper_cylindrical_pose_;
   }
 
   inline void initializeLeftControllerPose() {
@@ -86,6 +83,7 @@ class MotionControllerTeleoperation {
   const bool targetPoseIsReached(const geometry_msgs::PoseStamped& target_pose) const;
 
   void calculateCurrentGripperPose();
+
   void calculateGripperVelocity();
 
   inline const bool isAnySafetyButtonPressed() const {
@@ -164,7 +162,6 @@ class MotionControllerTeleoperation {
   ros::Publisher gripper_velocity_publisher_;
   ros::Publisher gripper_velocity_marker_publisher_;
   
-  // ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber left_controller_pose_subscriber_;
   ros::Subscriber left_controller_joy_subscriber_;
   ros::Subscriber reset_pose_signal_subscriber_;
@@ -172,6 +169,7 @@ class MotionControllerTeleoperation {
   // ROS messages
   geometry_msgs::PoseStamped initial_left_controller_pose_;
   geometry_msgs::PoseStamped current_left_controller_pose_;
+  // TODO: Remove these parameters (use cylindrical coordinates instead)
   geometry_msgs::PoseStamped initial_gripper_pose_;
   geometry_msgs::PoseStamped current_gripper_pose_;
   geometry_msgs::PoseStamped desired_gripper_pose_;
@@ -184,7 +182,6 @@ class MotionControllerTeleoperation {
   std_msgs::Bool orientation_safety_button_signal_;
 
   // flags
-  bool is_begin_teleoperation_;  // true if teleoperation has not started yet
   bool is_position_change_enabled_;
   bool is_orientation_change_enabled_;
   bool use_shared_controller_;  // false if using pure teleoperation
@@ -196,8 +193,13 @@ class MotionControllerTeleoperation {
   double linear_velocity_scale_;
   double angular_velocity_scale_;
 
-  std::mutex mutex_;  // to protect desired_gripper_pose_ from being reset during calculation
-  marslite::OperatingDirection robot_operating_direction_;
+  // [radian] angle difference between first joint yaw angle and control view direction
+  double control_view_offset_;
+  CylindricalPose initial_gripper_cylindrical_pose_;
+  CylindricalPose current_gripper_cylindrical_pose_;
+  CylindricalPose desired_gripper_cylindrical_pose_;
+
+  std::mutex desired_gripper_pose_mutex_;  // protect desired_gripper_pose_
   VelocityEstimator user_command_velocity_estimator_;
   VelocityEstimator gripper_velocity_estimator_;
   Tf2ListenerWrapper tf2_listener_;

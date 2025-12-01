@@ -21,7 +21,6 @@ class SharedControl {
   void parseParameters();
   void initializePublishers();
   void initializeSubscribers();
-  // void currentGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
   void detectedObjectsCallback(const detection_msgs::DetectedObjectArray::ConstPtr& objects);
   void recordSignalCallback(const std_msgs::Bool::ConstPtr& signal);
   void positionSafetyButtonSignalCallback(const std_msgs::Bool::ConstPtr& signal);

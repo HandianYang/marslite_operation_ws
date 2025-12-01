@@ -10,8 +10,9 @@
  ****************************************************** */
 
 MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHandle& nh)
-    : nh_(nh), loop_rate_(10), is_begin_teleoperation_(false),
-      is_position_change_enabled_(false), is_orientation_change_enabled_(false) {
+    : nh_(nh), loop_rate_(10),
+      is_position_change_enabled_(false),
+      is_orientation_change_enabled_(false) {
   this->parseParameters();
   this->initializePublishers();
   this->initializeSubscribers();
@@ -25,19 +26,63 @@ MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHand
  *                  Public members                    *  
  ****************************************************** */
 
+geometry_msgs::PoseStamped MotionControllerTeleoperation::generateInitialGripperPose(
+    const double& control_view_angle) {
+  // Pre-defined gripper pose parameters:
+  const double kGripperPoseRadius  = 0.538;  // [m]
+  const double kGripperPoseYOffset = -0.122; // [m]
+  const double kGripperPoseHeight  = 0.666;  // [m]
+  const double kGripperPoseRoll  = use_sim_ ? 0.0 : 1.571; // [rad]
+  const double kGripperPosePitch = 0.000; // [rad]
+  const double kGripperPoseYaw   = control_view_angle + control_view_offset_; // [rad]
+
+  geometry_msgs::PoseStamped initial_pose;
+  initial_pose.header.frame_id = "tm_base";
+  initial_pose.pose.position.x =
+      kGripperPoseRadius * cos(control_view_angle) - 
+      kGripperPoseYOffset * sin(control_view_angle);
+  initial_pose.pose.position.y = 
+      kGripperPoseRadius  * sin(control_view_angle) + 
+      kGripperPoseYOffset * cos(control_view_angle);
+  initial_pose.pose.position.z = kGripperPoseHeight;
+
+  RPY initial_pose_rpy;
+  initial_pose_rpy.roll = kGripperPoseRoll;
+  initial_pose_rpy.pitch = kGripperPosePitch;
+  initial_pose_rpy.yaw = kGripperPoseYaw;
+  while (initial_pose_rpy.yaw > M_PI)  initial_pose_rpy.yaw -= 2 * M_PI;
+  while (initial_pose_rpy.yaw < -M_PI) initial_pose_rpy.yaw += 2 * M_PI;
+  initial_pose.pose.orientation = initial_pose_rpy.convertToQuaternion();
+  
+  return initial_pose;
+}
+
+
 void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseStamped& target_pose) {
   initial_gripper_pose_ = desired_gripper_pose_ = target_pose;
   target_frame_publisher_.publish(target_pose);
   this->calculateCurrentGripperPose();
   
+  ROS_INFO_STREAM("Guiding to initial gripper pose: \n"
+      << " - Position: (" 
+      << target_pose.pose.position.x << ", "
+      << target_pose.pose.position.y << ", "
+      << target_pose.pose.position.z << ")\n"
+      << " - Orientation: ("
+      << target_pose.pose.orientation.x << ", "
+      << target_pose.pose.orientation.y << ", "
+      << target_pose.pose.orientation.z << ", "
+      << target_pose.pose.orientation.w << ")"
+  );
+
   // Perform teleoperation until the current gripper pose reaches the target pose
   while (nh_.ok() && !this->targetPoseIsReached(target_pose)) {
     ROS_INFO_STREAM_THROTTLE(5, "Waiting to reach the target pose...");
-
     this->calculateCurrentGripperPose();
     loop_rate_.sleep();
     ros::spinOnce();
   }
+
   ROS_INFO("Reached the target pose. You can start teleoperation now!");
 }
 
@@ -47,7 +92,7 @@ void MotionControllerTeleoperation::run() {
   while (nh_.ok()) {
     this->calculateCurrentGripperPose();
     {
-      std::lock_guard<std::mutex> lock(mutex_);
+      std::lock_guard<std::mutex> lock(desired_gripper_pose_mutex_);
       if (this->isAnySafetyButtonPressed()) {
         this->calculateDesiredGripperPose();
         this->calculateGripperVelocity();
@@ -55,13 +100,14 @@ void MotionControllerTeleoperation::run() {
       } else {
         this->initializeGripperPose();
         this->initializeLeftControllerPose();
-      }
+      }      
+
       this->publishDesiredGripperPose();
       this->publisherGripperVelocity();
       this->publishGripperVelocityMarker();
       this->publishUserCommandVelocity();
       this->publishUserCommandVelocityMarker();
-    } // end mutex scope
+    } // end desired_gripper_pose_mutex_ scope
     this->publishMobilePlatformVelocity();
 
     loop_rate_.sleep();
@@ -81,7 +127,14 @@ void MotionControllerTeleoperation::parseParameters() {
   pnh.param("angular_velocity_scale", angular_velocity_scale_, 0.15);
   pnh.param("use_shared_controller", use_shared_controller_, false);
   pnh.param("use_sim", use_sim_, false);
+
+  // TF yaw offset from control view direction
+  // [Note] TF is defined as: /tm_base -> /tm_gripper
+  // [Note] Actual_yaw = control_view_angle_ + control_view_offset_
+  control_view_offset_ = use_sim_ ? 0.0 : M_PI / 2;
+
   ROS_INFO_STREAM(std::boolalpha << "Parameters: " 
+      << "\n * control_view_offset: " << control_view_offset_
       << "\n * position_scale: " << position_scale_
       << "\n * orientation_scale: " << orientation_scale_
       << "\n * linear_velocity_scale: " << linear_velocity_scale_
@@ -142,7 +195,7 @@ void MotionControllerTeleoperation::initializeSubscribers() {
 
 void MotionControllerTeleoperation::leftControllerPoseCallback(
     const geometry_msgs::PoseStamped::ConstPtr& msg) {
-  current_left_controller_pose_.header.frame_id = "base_link";
+  current_left_controller_pose_.header.frame_id = "tm_base";
   current_left_controller_pose_.header.stamp = ros::Time::now();
   current_left_controller_pose_.pose = msg->pose;
 }
@@ -211,7 +264,7 @@ void MotionControllerTeleoperation::toggleGripperStatus() {
 
 void MotionControllerTeleoperation::resetPoseSignalCallback(const std_msgs::Bool::ConstPtr& msg) {
   {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(desired_gripper_pose_mutex_);
     this->initializeGripperPose();
     this->initializeLeftControllerPose();
   } // end mutex scope
@@ -220,12 +273,26 @@ void MotionControllerTeleoperation::resetPoseSignalCallback(const std_msgs::Bool
 void MotionControllerTeleoperation::calculateCurrentGripperPose() {
   const std::string target_frame = use_sim_ ? "robotiq_85_base_link" : "tm_gripper";
   const geometry_msgs::TransformStamped current_gripper_transform =
-      tf2_listener_.lookupTransform("base_link", target_frame);
+      tf2_listener_.lookupTransform("tm_base", target_frame);
   current_gripper_pose_.header = current_gripper_transform.header;
   current_gripper_pose_.pose.position.x = current_gripper_transform.transform.translation.x;
   current_gripper_pose_.pose.position.y = current_gripper_transform.transform.translation.y;
   current_gripper_pose_.pose.position.z = current_gripper_transform.transform.translation.z;
   current_gripper_pose_.pose.orientation = current_gripper_transform.transform.rotation;
+
+  RPY gripper_rpy;  gripper_rpy.convertFromPoseStamped(current_gripper_pose_);
+  current_gripper_cylindrical_pose_.yaw = gripper_rpy.yaw;
+  const double control_view_angle = gripper_rpy.yaw - control_view_offset_;
+  current_gripper_cylindrical_pose_.radius = 
+      current_gripper_pose_.pose.position.x * std::cos(control_view_angle) +
+      current_gripper_pose_.pose.position.y * std::sin(control_view_angle);
+  current_gripper_cylindrical_pose_.height = current_gripper_pose_.pose.position.z;
+
+  ROS_INFO_STREAM_THROTTLE(1, "- Radius/Yaw/Height: "
+      << current_gripper_cylindrical_pose_.radius << " [m] / "
+      << current_gripper_cylindrical_pose_.yaw * 180 / M_PI << " [deg] / "
+      << current_gripper_cylindrical_pose_.height << " [m]"
+  );
 }
 
 void MotionControllerTeleoperation::calculateGripperVelocity() {
@@ -239,16 +306,16 @@ void MotionControllerTeleoperation::calculateGripperVelocity() {
 
 void MotionControllerTeleoperation::calculateDesiredGripperPose() {
   desired_gripper_pose_.header.stamp = ros::Time::now();
-  if (is_position_change_enabled_) {
-    this->calculateDesiredGripperPosition();
-  } else {
-    this->resetPositionalMovement();
-  }
-
   if (is_orientation_change_enabled_) {
     this->calculateDesiredGripperOrientation();
   } else {
     this->resetOrientationalMovement();
+  }
+
+  if (is_position_change_enabled_) {
+    this->calculateDesiredGripperPosition();
+  } else {
+    this->resetPositionalMovement();
   }
 }
 
@@ -258,6 +325,7 @@ const bool MotionControllerTeleoperation::targetPoseIsReached(
   const double dy = current_gripper_pose_.pose.position.y - target_pose.pose.position.y;
   const double dz = current_gripper_pose_.pose.position.z - target_pose.pose.position.z;
   const double position_error = sqrt(dx*dx + dy*dy + dz*dz);
+  // ROS_INFO_STREAM_THROTTLE(1, "Position error: " << position_error);
   if (position_error > kPositionTolerance)  return false;
 
   auto toEig = [](const geometry_msgs::Quaternion& q){
@@ -276,6 +344,7 @@ const bool MotionControllerTeleoperation::targetPoseIsReached(
   auto clamp01 = [](double x) { return std::max(0.0, std::min(1.0, x)); };
   const double orientation_error = 2.0 * std::acos(clamp01(dot));
 
+  // ROS_INFO_STREAM_THROTTLE(1, "orientation error: " << orientation_error);
   return orientation_error <= kOrientationTolerance;
 }
 
@@ -307,39 +376,39 @@ geometry_msgs::Vector3 MotionControllerTeleoperation::scalePositionDifference(
 
 void MotionControllerTeleoperation::applyPositionDifference(
     const geometry_msgs::Vector3& scaled_position_difference) {
-  switch (robot_operating_direction_) {
-    case marslite::OperatingDirection::FRONT:
-      // | controller |   gripper  |
-      // |------------|------------|
-      // | front/back | front/back |
-      // | left/right | left/right |
-      // |   up/down  |   up/down  |
-      desired_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x + scaled_position_difference.x;
-      desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.y;
-      desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
-      break;
-    case marslite::OperatingDirection::LEFT:
-      // | controller |   gripper  |
-      // |------------|------------|
-      // | front/back | left/right |
-      // | left/right | back/front |
-      // |   up/down  |   up/down  |
-      desired_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x - scaled_position_difference.y;
-      desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y + scaled_position_difference.x;
-      desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
-      break;
-    case marslite::OperatingDirection::RIGHT:
-      // | controller |   gripper  |
-      // |------------|------------|
-      // | front/back | right/left |
-      // | left/right | front/back |
-      // |   up/down  |   up/down  |
-      desired_gripper_pose_.pose.position.x = initial_gripper_pose_.pose.position.x + scaled_position_difference.y;
-      desired_gripper_pose_.pose.position.y = initial_gripper_pose_.pose.position.y - scaled_position_difference.x;
-      desired_gripper_pose_.pose.position.z = initial_gripper_pose_.pose.position.z + scaled_position_difference.z;
-      break;
-    default:  break;
-  }
+  // TODO: Make kVirtualArmLength adjustable via calibration process
+  const double kVirtualArmLength = 0.4; // [m]
+  const double relative_x = scaled_position_difference.x + kVirtualArmLength;
+  const double relative_y = scaled_position_difference.y;
+
+  const double current_user_radius = std::sqrt(relative_x * relative_x + relative_y * relative_y);
+  const double delta_radius_input = current_user_radius - kVirtualArmLength;
+  const double delta_angle_input = std::atan2(relative_y, relative_x);
+
+  desired_gripper_cylindrical_pose_.radius =
+      initial_gripper_cylindrical_pose_.radius + delta_radius_input * 1.0;
+  desired_gripper_cylindrical_pose_.yaw =
+      initial_gripper_cylindrical_pose_.yaw + delta_angle_input * 1.0;
+  desired_gripper_cylindrical_pose_.height =
+      initial_gripper_cylindrical_pose_.height + scaled_position_difference.z;
+
+  
+  const double control_view_angle = desired_gripper_cylindrical_pose_.yaw - control_view_offset_;
+  desired_gripper_pose_.pose.position.x =
+      desired_gripper_cylindrical_pose_.radius * std::cos(control_view_angle) - 
+      kGripperPoseYOffset * std::sin(control_view_angle);
+  desired_gripper_pose_.pose.position.y =
+      desired_gripper_cylindrical_pose_.radius * std::sin(control_view_angle) + 
+      kGripperPoseYOffset * std::cos(control_view_angle);
+  desired_gripper_pose_.pose.position.z = desired_gripper_cylindrical_pose_.height;
+
+  RPY current_gripper_rpy;
+  current_gripper_rpy.convertFromPoseStamped(current_gripper_pose_);
+  RPY desired_gripper_rpy;
+  desired_gripper_rpy.roll = current_gripper_rpy.roll;
+  desired_gripper_rpy.pitch = current_gripper_rpy.pitch;
+  desired_gripper_rpy.yaw = desired_gripper_cylindrical_pose_.yaw;
+  desired_gripper_pose_.pose.orientation = desired_gripper_rpy.convertToQuaternion();
 }
 
 void MotionControllerTeleoperation::calculateDesiredGripperOrientation() {
@@ -372,8 +441,8 @@ RPY MotionControllerTeleoperation::scaleOrientationDifference(const RPY& orienta
 
 void MotionControllerTeleoperation::applyOrientationDifference(const RPY& scaled_orientation_difference) {
   // [NOTE] The transformation from left controller to `/tm_gripper` to
-  //   `/base_link` is applied in this function:
-  //   | controller | /base_link  |
+  //   `/tm_base` is applied in this function:
+  //   | controller | /tm_base  |
   //   |------------|-------------|
   //   |   +-roll   |   +-pitch   |
   //   |   +-pitch  |   -+roll    |
@@ -382,7 +451,7 @@ void MotionControllerTeleoperation::applyOrientationDifference(const RPY& scaled
   transformed_orientation_difference.roll = scaled_orientation_difference.pitch;
   transformed_orientation_difference.pitch = 0.0;
   // [NOTE] The pitch of the transformed RPY is disabled because we don't need
-  //   roll rotation for the gripper (w.r.t. `base_link`)`
+  //   roll rotation for the gripper (w.r.t. `tm_base`)`
   // 
   //   Uncomment this line to enable pitch change:
   // transformed_orientation_difference.pitch = -scaled_orientation_difference.roll;
@@ -409,7 +478,7 @@ void MotionControllerTeleoperation::calculateUserCommandVelocity() {
 
 void MotionControllerTeleoperation::publishUserCommandVelocityMarker() {
   visualization_msgs::Marker marker;
-  marker.header.frame_id = "base_link";
+  marker.header.frame_id = "tm_base";
   marker.header.stamp = ros::Time::now();
   marker.ns = "user_command_velocity";
   marker.id = 0;
@@ -475,7 +544,7 @@ void MotionControllerTeleoperation::publishUserCommandVelocityMarker() {
 
 void MotionControllerTeleoperation::publishGripperVelocityMarker() {
   visualization_msgs::Marker marker;
-  marker.header.frame_id = "base_link";
+  marker.header.frame_id = "tm_base";
   marker.header.stamp = ros::Time::now();
   marker.ns = "gripper_velocity";
   marker.id = 0;

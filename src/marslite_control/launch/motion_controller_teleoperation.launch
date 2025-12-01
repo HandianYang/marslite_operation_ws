@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
   <include file="$(find file_server)/launch/ros_sharp_communication.launch"/>
-  <!-- <remap from="/cartesian_control/target_frame" to="/marslite_cartesian_motion_controller/target_frame"/> -->
 
   <arg name="position_scale" default="0.8"/>
   <arg name="orientation_scale" default="0.8"/>

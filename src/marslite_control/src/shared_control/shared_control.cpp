@@ -61,10 +61,6 @@ void SharedControl::initializePublishers() {
 }
 
 void SharedControl::initializeSubscribers() {
-  // current_gripper_pose_subscriber_ = nh_.subscribe(
-  //     "/marslite_control/gripper_pose", 1,
-  //     &SharedControl::currentGripperPoseCallback, this
-  // );
   detected_objects_subscriber_ = nh_.subscribe(
       "/yolo/detected_objects", 1,
       &SharedControl::detectedObjectsCallback, this
@@ -163,7 +159,7 @@ void SharedControl::userCommandVelocityCallback(
 void SharedControl::updateCurrentGripperPositionForIntentInference() {
   const std::string target_frame = use_sim_ ? "robotiq_85_base_link" : "tm_gripper";
   const geometry_msgs::TransformStamped current_gripper_transform =
-      tf2_listener_.lookupTransform("base_link", target_frame);
+      tf2_listener_.lookupTransform("tm_base", target_frame);
   
   geometry_msgs::Point current_gripper_position;
   current_gripper_position.x = current_gripper_transform.transform.translation.x;
@@ -189,7 +185,7 @@ geometry_msgs::PoseStamped SharedControl::getTargetPose() {
     is_previously_locked_ = true;
     
     geometry_msgs::PoseStamped target_pose;
-    target_pose.header.frame_id = "base_link";
+    target_pose.header.frame_id = "tm_base";
     target_pose.header.stamp = ros::Time::now();
     target_pose.pose.position = this->getTargetPosition();
     target_pose.pose.orientation = this->getTargetOrientation();

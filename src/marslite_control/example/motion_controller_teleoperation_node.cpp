@@ -7,11 +7,12 @@ int main(int argc, char **argv)
   ros::Duration(1.0).sleep(); // wait for a while to let ROS setup completely
   
   // Gripper initial pose options are:
-  // - motion_controller_teleoperation.resetToFrontPose();
-  // - motion_controller_teleoperation.resetToLeftPose();
-  // - motion_controller_teleoperation.resetToRightPose();
+  // - resetToFrontPose();
+  // - resetToLeftPose();
+  // - resetToLeftFrontPose();
+  // - resetToRightPose();
   // Change to your desired initial pose here: 
-  motion_controller_teleoperation.resetToLeftPose();
+  motion_controller_teleoperation.resetToLeftFrontPose();
   motion_controller_teleoperation.run();
   return 0;
 }

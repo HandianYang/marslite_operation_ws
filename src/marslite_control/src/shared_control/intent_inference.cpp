@@ -16,7 +16,7 @@ IntentInference::IntentInference(const double& transition_probability)
       is_cooldown_timer_started_(false),
       is_locked_timer_started_(false) {
   belief_ = {};
-  position_to_base_link_ = {};
+  position_to_tm_base_ = {};
 }
 
 /******************************************************
@@ -26,10 +26,10 @@ IntentInference::IntentInference(const double& transition_probability)
 void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArray& recorded_objects) {
   recorded_objects_ = recorded_objects;
   belief_ = {};
-  position_to_base_link_ = {};
+  position_to_tm_base_ = {};
   for (const detection_msgs::DetectedObject& obj : recorded_objects.objects) {
     belief_[obj] = 1.0 / recorded_objects.objects.size();
-    position_to_base_link_[obj] = this->transformOdomToBaseLink(obj.centroid);
+    position_to_tm_base_[obj] = this->transformOdomToTMBase(obj.centroid);
   }
 }
 
@@ -45,7 +45,7 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
     marker.id = id++;
     marker.type = visualization_msgs::Marker::SPHERE;
     marker.action = visualization_msgs::Marker::ADD;
-    marker.pose.position = position_to_base_link_[object];
+    marker.pose.position = position_to_tm_base_[object];
     marker.pose.orientation.w = 1.0;
     marker.scale.x = 0.01;
     marker.scale.y = 0.01;
@@ -63,7 +63,7 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
     text_marker.id = id++;
     text_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
     text_marker.action = visualization_msgs::Marker::ADD;
-    text_marker.pose.position = position_to_base_link_[object];
+    text_marker.pose.position = position_to_tm_base_[object];
     text_marker.pose.position.z += 0.15;
     text_marker.scale.z = 0.03;
     text_marker.color.r = 1.0;
@@ -183,23 +183,23 @@ void IntentInference::updateBelief() {
 
 void IntentInference::updatePositionToBaseLink() {
   for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
-    position_to_base_link_[recorded_object] =
-        this->transformOdomToBaseLink(recorded_object.centroid);
+    position_to_tm_base_[recorded_object] =
+        this->transformOdomToTMBase(recorded_object.centroid);
   }
 }
 
-geometry_msgs::Point IntentInference::transformOdomToBaseLink(const geometry_msgs::Point& point_in_odom) {
+geometry_msgs::Point IntentInference::transformOdomToTMBase(const geometry_msgs::Point& point_in_odom) {
   geometry_msgs::PointStamped point_stamped_in_odom;
   point_stamped_in_odom.header.frame_id = "odom";
   point_stamped_in_odom.header.stamp = ros::Time(0);
   point_stamped_in_odom.point = point_in_odom;
   
-  geometry_msgs::TransformStamped odom_to_base_link_transform
-      = tf2_listener_.lookupTransform("base_link", "odom");
-  geometry_msgs::PointStamped point_stamped_in_base_link;
-  tf2::doTransform(point_stamped_in_odom, point_stamped_in_base_link, odom_to_base_link_transform);
+  geometry_msgs::TransformStamped odom_to_tm_base_transform
+      = tf2_listener_.lookupTransform("tm_base", "odom");
+  geometry_msgs::PointStamped point_stamped_in_tm_base;
+  tf2::doTransform(point_stamped_in_odom, point_stamped_in_tm_base, odom_to_tm_base_transform);
   
-  return point_stamped_in_base_link.point;
+  return point_stamped_in_tm_base.point;
 }
 
 void IntentInference::updateGripperMotionState() {
@@ -349,9 +349,9 @@ const bool IntentInference::isCooldownTimePassed() {
 
 geometry_msgs::Vector3 IntentInference::getGoalDirection(const detection_msgs::DetectedObject& goal) const { 
   geometry_msgs::Vector3 goal_direction;
-  goal_direction.x = position_to_base_link_.at(goal).x - gripper_position_.x;
-  goal_direction.y = position_to_base_link_.at(goal).y - gripper_position_.y;
-  goal_direction.z = position_to_base_link_.at(goal).z - gripper_position_.z;
+  goal_direction.x = position_to_tm_base_.at(goal).x - gripper_position_.x;
+  goal_direction.y = position_to_tm_base_.at(goal).y - gripper_position_.y;
+  goal_direction.z = position_to_tm_base_.at(goal).z - gripper_position_.z;
   return goal_direction;
 }
 
