@@ -39,7 +39,7 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
   for (const auto& [object, belief_value] : belief_) {
     // object marker
     visualization_msgs::Marker marker;
-    marker.header.frame_id = "base_link";
+    marker.header.frame_id = "tm_base";
     marker.header.stamp = ros::Time::now();
     marker.ns = "intent_belief";
     marker.id = id++;
@@ -76,7 +76,7 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
 
   // gripper_motion_state marker
   visualization_msgs::Marker gripper_marker;
-  gripper_marker.header.frame_id = "base_link";
+  gripper_marker.header.frame_id = "tm_base";
   gripper_marker.header.stamp = ros::Time::now();
   gripper_marker.ns = "gripper_motion_state";
   gripper_marker.id = id++;
@@ -195,7 +195,7 @@ geometry_msgs::Point IntentInference::transformOdomToTMBase(const geometry_msgs:
   point_stamped_in_odom.point = point_in_odom;
   
   geometry_msgs::TransformStamped odom_to_tm_base_transform
-      = tf2_listener_.lookupTransform("tm_base", "odom");
+      = tf2_listener_.lookupTransform<geometry_msgs::TransformStamped>("tm_base", "odom");
   geometry_msgs::PointStamped point_stamped_in_tm_base;
   tf2::doTransform(point_stamped_in_odom, point_stamped_in_tm_base, odom_to_tm_base_transform);
   

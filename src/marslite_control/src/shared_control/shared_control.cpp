@@ -21,16 +21,19 @@ SharedControl::SharedControl(const ros::NodeHandle& nh)
  *                  Public members                    *  
  ****************************************************** */
 
-void SharedControl::run() {
+void SharedControl::run_inference() {
   while (nh_.ok()) {
-    this->updateCurrentGripperPositionForIntentInference();
-    intent_inference_.updateBelief();
-    this->publishIntentBeliefVisualization();
-    this->publishBlendingGripperPose();
-    
-    rate_.sleep();
+    this->run_inference_once();
+    ros::Rate(10).sleep();
     ros::spinOnce();
   }
+}
+
+void SharedControl::run_inference_once() {
+  this->updateCurrentGripperPositionForIntentInference();
+  intent_inference_.updateBelief();
+  this->publishIntentBeliefVisualization();
+  this->publishBlendingGripperPose();
 }
 
 /******************************************************
@@ -102,29 +105,29 @@ void SharedControl::detectedObjectsCallback(
 void SharedControl::recordSignalCallback(
     const std_msgs::Bool::ConstPtr& signal) {
   begin_recording_ = true;
-  // TODO: Remove this test code later
-  { // test scope
-    detection_msgs::DetectedObject object1;
-    object1.label = "object1";
-    object1.frame = "odom";
-    object1.confidence = 1.0;
-    object1.centroid.x = 0.378;
-    object1.centroid.y = 0.755;
-    object1.centroid.z = 0.984;
+  // // TODO: Remove this test code later
+  // { // test scope
+  //   detection_msgs::DetectedObject object1;
+  //   object1.label = "object1";
+  //   object1.frame = "odom";
+  //   object1.confidence = 1.0;
+  //   object1.centroid.x = 0.378;
+  //   object1.centroid.y = 0.755;
+  //   object1.centroid.z = 0.984;
 
-    detection_msgs::DetectedObject object2;
-    object2.label = "object2";
-    object2.frame = "odom";
-    object2.confidence = 1.0;
-    object2.centroid.x = 0.544;
-    object2.centroid.y = 0.775;
-    object2.centroid.z = 0.968;
+  //   detection_msgs::DetectedObject object2;
+  //   object2.label = "object2";
+  //   object2.frame = "odom";
+  //   object2.confidence = 1.0;
+  //   object2.centroid.x = 0.544;
+  //   object2.centroid.y = 0.775;
+  //   object2.centroid.z = 0.968;
 
-    detection_msgs::DetectedObjectArray recorded_objects;
-    recorded_objects.objects.push_back(object1);
-    recorded_objects.objects.push_back(object2);
-    intent_inference_.setRecordedObjects(recorded_objects);
-  } // end test scope
+  //   detection_msgs::DetectedObjectArray recorded_objects;
+  //   recorded_objects.objects.push_back(object1);
+  //   recorded_objects.objects.push_back(object2);
+  //   intent_inference_.setRecordedObjects(recorded_objects);
+  // } // end test scope
 }
 
 void SharedControl::positionSafetyButtonSignalCallback(
@@ -157,14 +160,9 @@ void SharedControl::userCommandVelocityCallback(
 }
 
 void SharedControl::updateCurrentGripperPositionForIntentInference() {
-  const std::string target_frame = use_sim_ ? "robotiq_85_base_link" : "tm_gripper";
-  const geometry_msgs::TransformStamped current_gripper_transform =
-      tf2_listener_.lookupTransform("tm_base", target_frame);
-  
-  geometry_msgs::Point current_gripper_position;
-  current_gripper_position.x = current_gripper_transform.transform.translation.x;
-  current_gripper_position.y = current_gripper_transform.transform.translation.y;
-  current_gripper_position.z = current_gripper_transform.transform.translation.z;
+  const std::string source_frame = use_sim_ ? "robotiq_85_base_link" : "tm_gripper";
+  const geometry_msgs::Point current_gripper_position =
+      tf2_listener_.lookupTransform<geometry_msgs::Point>("tm_base", source_frame);
   intent_inference_.setGripperPosition(current_gripper_position);
 }
 

@@ -15,7 +15,10 @@
 class SharedControl {
  public:
   explicit SharedControl(const ros::NodeHandle& nh = ros::NodeHandle());
-  void run();
+
+  void run_inference();
+
+  void run_inference_once();
 
  private:
   void parseParameters();
@@ -45,7 +48,6 @@ class SharedControl {
   ros::Publisher reset_pose_signal_publisher_;
   ros::Publisher gripper_motion_state_publisher_;
 
-  // ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber detected_objects_subscriber_;
   ros::Subscriber record_signal_subscriber_;
   ros::Subscriber position_safety_button_signal_subscriber_;
@@ -59,7 +61,6 @@ class SharedControl {
   Tf2ListenerWrapper tf2_listener_;
 
   // ROS messages
-  // geometry_msgs::PoseStamped current_gripper_pose_;
   geometry_msgs::PoseStamped user_desired_gripper_pose_;
   std_msgs::Bool user_desired_gripper_status_;
   std_msgs::Bool position_safety_button_signal_;

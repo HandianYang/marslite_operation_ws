@@ -7,6 +7,8 @@
 #include <geometry_msgs/Twist.h>
 #include <sensor_msgs/Joy.h>
 #include <std_msgs/Bool.h>
+#include <visualization_msgs/Marker.h>
+
 #include <mutex>
 
 #include "utils/rpy.h"
@@ -18,6 +20,10 @@ class MotionControllerTeleoperation {
  public:
   // threshold for considering the trigger button of motion controllers is pressed
   static inline constexpr double kTriggerThreshold = 0.95;
+  // deadzone for analog joystick to avoid unintentional small movements
+  static inline constexpr double kAnalogJoystickDeadzone = 0.8;
+  // [s] cooldown time for toggling gripper status
+  static inline constexpr double kGripperToggleCooldownTime = 0.5;
   // tolerance for considering two positions are the same
   static inline constexpr double kPositionTolerance = 1e-3;
   // tolerance for considering two orientations are the same (in terms of quaternion)
@@ -67,74 +73,50 @@ class MotionControllerTeleoperation {
   void leftControllerJoyCallback(const sensor_msgs::Joy::ConstPtr& msg);
   void toggleGripperStatus();
   void resetPoseSignalCallback(const std_msgs::Bool::ConstPtr& msg);
-
-  inline void initializeGripperPose() {
-    this->resetPositionalMovement();
-    this->resetOrientationalMovement();
-    initial_gripper_pose_ = desired_gripper_pose_;
-    initial_gripper_cylindrical_pose_ = desired_gripper_cylindrical_pose_
-                                      = current_gripper_cylindrical_pose_;
-  }
-
-  inline void initializeLeftControllerPose() {
-    initial_left_controller_pose_ = current_left_controller_pose_;
-  }
-
   const bool targetPoseIsReached(const geometry_msgs::PoseStamped& target_pose) const;
-
+  void initializeGripperPose();
+  void resetPositionalMovement();
+  void resetOrientationalMovement();
+  void initializeLeftControllerPose();
   void calculateCurrentGripperPose();
-
-  void calculateGripperVelocity();
 
   inline const bool isAnySafetyButtonPressed() const {
     return is_position_change_enabled_ || is_orientation_change_enabled_;
   }
   
   void calculateDesiredGripperPose();
-  void calculateDesiredGripperPosition();
-  geometry_msgs::Vector3 getPositionDifference();
-  geometry_msgs::Vector3 scalePositionDifference(const geometry_msgs::Vector3& position_difference);
-  void applyPositionDifference(const geometry_msgs::Vector3& scaled_position_difference);
   void calculateDesiredGripperOrientation();
   RPY getOrientationDifference();
   RPY scaleOrientationDifference(const RPY& orientation_difference);
   void applyOrientationDifference(const RPY& scaled_orientation_difference);
-
+  void calculateDesiredGripperPosition();
+  geometry_msgs::Vector3 getPositionDifference();
+  geometry_msgs::Vector3 scalePositionDifference(const geometry_msgs::Vector3& position_difference);
+  void applyPositionDifference(const geometry_msgs::Vector3& scaled_position_difference);
+  void calculateGripperVelocity();
+  void calculateGripperVelocityMarker();
   void calculateUserCommandVelocity();
-
-  inline void resetPositionalMovement() {
-    // Shift a little to avoid immediate stop
-    gripper_velocity_estimator_.estimateVelocity();
-    gripper_velocity_ = gripper_velocity_estimator_.getEstimatedVelocity();
-    desired_gripper_pose_.pose.position.x = current_gripper_pose_.pose.position.x + gripper_velocity_.x * 0.01;
-    desired_gripper_pose_.pose.position.y = current_gripper_pose_.pose.position.y + gripper_velocity_.y * 0.01;
-    desired_gripper_pose_.pose.position.z = current_gripper_pose_.pose.position.z + gripper_velocity_.z * 0.01;
-    gripper_velocity_ = geometry_msgs::Vector3();
-
-    // reset user_command_velocity_
-    user_command_velocity_estimator_.clear();
-    user_command_velocity_ = geometry_msgs::Vector3(); 
-  }
-
-  inline void resetOrientationalMovement() {
-    desired_gripper_pose_.pose.orientation = current_gripper_pose_.pose.orientation;
-  }
+  void calculateUserCommandVelocityMarker();
 
   inline void publishDesiredGripperPose() {
     gripper_pose_publisher_.publish(desired_gripper_pose_);
+  }
+
+  inline void publisherGripperVelocity() {
+    gripper_velocity_publisher_.publish(gripper_velocity_);
+  }
+
+  inline void publishGripperVelocityMarker() {
+    gripper_velocity_marker_publisher_.publish(gripper_velocity_marker_);
   }
 
   inline void publishUserCommandVelocity() {
     user_command_velocity_publisher_.publish(user_command_velocity_);
   }
 
-  void publishUserCommandVelocityMarker();
-
-  inline void publisherGripperVelocity() {
-    gripper_velocity_publisher_.publish(gripper_velocity_);
+  inline void publishUserCommandVelocityMarker() {
+    user_command_velocity_marker_publisher_.publish(user_command_velocity_marker_);
   }
-
-  void publishGripperVelocityMarker();
 
   inline void publishMobilePlatformVelocity() {
     mobile_platform_velocity_publisher_.publish(mobile_platform_velocity_);
@@ -180,6 +162,8 @@ class MotionControllerTeleoperation {
   std_msgs::Bool record_signal_;
   std_msgs::Bool position_safety_button_signal_;
   std_msgs::Bool orientation_safety_button_signal_;
+  visualization_msgs::Marker user_command_velocity_marker_;
+  visualization_msgs::Marker gripper_velocity_marker_;
 
   // flags
   bool is_position_change_enabled_;

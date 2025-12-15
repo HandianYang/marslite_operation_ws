@@ -61,15 +61,9 @@ void KeyboardTeleoperation::initializePublishers() {
 }
 
 void KeyboardTeleoperation::setInitialGripperPose() {
-  const std::string source_frame = "base_link";
-  const std::string target_frame = use_sim_ ? "robotiq_85_base_link" : "tm_gripper";
-  geometry_msgs::TransformStamped gripper_transform = 
-      tf2_listener_.lookupTransform(source_frame, target_frame);
-  desired_gripper_pose_.header.frame_id = "base_link";
-  desired_gripper_pose_.pose.position.x = gripper_transform.transform.translation.x;
-  desired_gripper_pose_.pose.position.y = gripper_transform.transform.translation.y;
-  desired_gripper_pose_.pose.position.z = gripper_transform.transform.translation.z;
-  desired_gripper_pose_.pose.orientation = gripper_transform.transform.rotation;
+  const std::string target_frame = "tm_base";
+  const std::string source_frame = use_sim_ ? "robotiq_85_base_link" : "tm_gripper";
+  desired_gripper_pose_ = tf2_listener_.lookupTransform<geometry_msgs::PoseStamped>(target_frame, source_frame);
 }
 
 void KeyboardTeleoperation::getKeyboardInput() {
