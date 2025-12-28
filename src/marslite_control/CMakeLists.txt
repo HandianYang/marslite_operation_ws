@@ -59,37 +59,45 @@ include_directories(
   ${EIGEN3_INCLUDE_DIRS}
 )
 
-# add_executable(gripper_pose_publisher_node
-#   src/gripper_pose_publisher_node.cpp
-# )
-# target_link_libraries(gripper_pose_publisher_node
-#   ${catkin_LIBRARIES}
-# )
+add_library(cartesian_control_lib
+  src/cartesian_control/motion_controller_teleoperation.cpp
+  src/cartesian_control/keyboard_teleoperation.cpp
+  src/utils/velocity_estimator.cpp
+)
+target_link_libraries(cartesian_control_lib
+  ${catkin_LIBRARIES}
+)
+
+add_library(shared_control_lib
+  src/shared_control/shared_control.cpp
+  src/shared_control/intent_inference.cpp
+)
+target_link_libraries(shared_control_lib
+  ${catkin_LIBRARIES}
+)
 
 add_executable(motion_controller_teleoperation_node
   example/motion_controller_teleoperation_node.cpp
-  src/cartesian_control/motion_controller_teleoperation.cpp
-  src/utils/velocity_estimator.cpp
 )
 target_link_libraries(motion_controller_teleoperation_node
   ${catkin_LIBRARIES}
+  cartesian_control_lib
 )
 
 add_executable(keyboard_teleoperation_node
   example/keyboard_teleoperation_node.cpp
-  src/cartesian_control/keyboard_teleoperation.cpp
 )
 target_link_libraries(keyboard_teleoperation_node
   ${catkin_LIBRARIES}
+  cartesian_control_lib
 )
 
 add_executable(shared_control_node
   example/shared_control_node.cpp
-  src/shared_control/shared_control.cpp
-  src/shared_control/intent_inference.cpp
 )
 target_link_libraries(shared_control_node
   ${catkin_LIBRARIES}
+  shared_control_lib
 )
 
 ################################################################################
@@ -104,5 +112,20 @@ add_executable(test_cartesian_control
   test/test_cartesian_control.cpp
 )
 target_link_libraries(test_cartesian_control
+  ${catkin_LIBRARIES}
+)
+
+add_executable(test_first_joint_rotation
+  test/test_first_joint_rotation.cpp
+)
+target_link_libraries(test_first_joint_rotation
+  ${catkin_LIBRARIES}
+  cartesian_control_lib
+)
+
+add_executable(test_detected_object_reaching
+  test/test_detected_object_reaching.cpp
+)
+target_link_libraries(test_detected_object_reaching
   ${catkin_LIBRARIES}
 )

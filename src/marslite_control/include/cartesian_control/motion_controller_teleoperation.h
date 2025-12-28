@@ -1,16 +1,19 @@
 #ifndef MARSLITE_CONTROL_CARTESIAN_CONTROL_MOTION_CONTROLLER_TELEOPERATION_H
 #define MARSLITE_CONTROL_CARTESIAN_CONTROL_MOTION_CONTROLLER_TELEOPERATION_H
 
+#include <Eigen/Dense>
+#include <mutex>
+
 #include <ros/ros.h>
 #include <geometry_msgs/Vector3.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/Twist.h>
 #include <sensor_msgs/Joy.h>
 #include <std_msgs/Bool.h>
+#include <std_srvs/Trigger.h>
 #include <visualization_msgs/Marker.h>
 
-#include <mutex>
-
+#include "utils/hybrid_pose.h"
 #include "utils/rpy.h"
 #include "utils/tf2_listener_wrapper.h"
 #include "utils/velocity_estimator.h"
@@ -18,7 +21,6 @@
 
 class MotionControllerTeleoperation {
  public:
-  // threshold for considering the trigger button of motion controllers is pressed
   static inline constexpr double kTriggerThreshold = 0.95;
   // deadzone for analog joystick to avoid unintentional small movements
   static inline constexpr double kAnalogJoystickDeadzone = 0.8;
@@ -29,31 +31,49 @@ class MotionControllerTeleoperation {
   // tolerance for considering two orientations are the same (in terms of quaternion)
   static inline constexpr double kOrientationTolerance = 0.01;
   // buffer size for velocity estimator
-  static inline constexpr size_t kEstimatorBufferSize = 10;
+  static inline constexpr size_t kEstimatorBufferSize = 6;
   // minimum speed for velocity estimator
   static inline constexpr double kEstimatorMinSpeed = 1e-2;
-  // [m] fixed Y offset for initial gripper pose
-  static inline constexpr double kGripperPoseYOffset = -0.122;
 
   explicit MotionControllerTeleoperation(const ros::NodeHandle& nh = ros::NodeHandle());
 
-  geometry_msgs::PoseStamped generateInitialGripperPose(const double& first_joint_yaw = 0.0);
-
   inline void resetToFrontPose() {
-    this->teleoperateToPose(this->generateInitialGripperPose(0.0));
+    this->teleoperateToPose(
+        MotionControllerTeleoperation::generateInitialGripperPose(
+            0.0, control_view_offset_, use_sim_
+        )
+    );
   }
 
   inline void resetToLeftPose() {
-    this->teleoperateToPose(this->generateInitialGripperPose(M_PI / 2));
+    this->teleoperateToPose(
+        MotionControllerTeleoperation::generateInitialGripperPose(
+            M_PI / 2, control_view_offset_, use_sim_
+        )
+    );
   }
 
   inline void resetToLeftFrontPose() {        
-    this->teleoperateToPose(this->generateInitialGripperPose(M_PI / 4));
+    this->teleoperateToPose(
+        MotionControllerTeleoperation::generateInitialGripperPose(
+            M_PI / 4, control_view_offset_, use_sim_
+        )
+    );
   }
 
   inline void resetToRightPose() {
-    this->teleoperateToPose(this->generateInitialGripperPose(-M_PI / 2));
+    this->teleoperateToPose(
+        MotionControllerTeleoperation::generateInitialGripperPose(
+            -M_PI / 2, control_view_offset_, use_sim_
+        )
+    );
   }
+
+  static geometry_msgs::PoseStamped generateInitialGripperPose(
+      const double& control_view_angle = 0.0,
+      const double& control_view_offset = 0.0,
+      const bool& use_sim = false
+  );
 
   void teleoperateToPose(const geometry_msgs::PoseStamped& target_pose);
 
@@ -69,16 +89,18 @@ class MotionControllerTeleoperation {
   void parseParameters();
   void initializePublishers();
   void initializeSubscribers();
+  void initializeHeadersForMessages();
+  void initializeVelocityEstimators();
   void leftControllerPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
   void leftControllerJoyCallback(const sensor_msgs::Joy::ConstPtr& msg);
   void toggleGripperStatus();
   void resetPoseSignalCallback(const std_msgs::Bool::ConstPtr& msg);
+  bool resetCallback(std_srvs::Trigger::Request &req, std_srvs::Trigger::Response &res);
+
   const bool targetPoseIsReached(const geometry_msgs::PoseStamped& target_pose) const;
   void initializeGripperPose();
-  void resetPositionalMovement();
-  void resetOrientationalMovement();
   void initializeLeftControllerPose();
-  void calculateCurrentGripperPose();
+  void updateGripperPose();
 
   inline const bool isAnySafetyButtonPressed() const {
     return is_position_change_enabled_ || is_orientation_change_enabled_;
@@ -90,16 +112,19 @@ class MotionControllerTeleoperation {
   RPY scaleOrientationDifference(const RPY& orientation_difference);
   void applyOrientationDifference(const RPY& scaled_orientation_difference);
   void calculateDesiredGripperPosition();
-  geometry_msgs::Vector3 getPositionDifference();
-  geometry_msgs::Vector3 scalePositionDifference(const geometry_msgs::Vector3& position_difference);
-  void applyPositionDifference(const geometry_msgs::Vector3& scaled_position_difference);
-  void calculateGripperVelocity();
+  CylindricalPoint getCylindricalPositionDifference();
+  CylindricalPoint scaleCylindricalPositionDifference(const CylindricalPoint& position_difference);
+  void applyCylindricalPositionDifference(const CylindricalPoint& scaled_position_difference);
+  void updateGripperVelocity();
   void calculateGripperVelocityMarker();
   void calculateUserCommandVelocity();
   void calculateUserCommandVelocityMarker();
 
   inline void publishDesiredGripperPose() {
-    gripper_pose_publisher_.publish(desired_gripper_pose_);
+    geometry_msgs::PoseStamped desired_pose;
+    desired_pose.header = desired_gripper_hybrid_pose_.header;
+    desired_pose.pose = desired_gripper_hybrid_pose_.toCartesianPose();
+    gripper_pose_publisher_.publish(desired_pose);
   }
 
   inline void publisherGripperVelocity() {
@@ -138,23 +163,18 @@ class MotionControllerTeleoperation {
   ros::Publisher position_safety_button_signal_publisher_;
   ros::Publisher orientation_safety_button_signal_publisher_;
   ros::Publisher mobile_platform_velocity_publisher_;
-
   ros::Publisher user_command_velocity_publisher_;
   ros::Publisher user_command_velocity_marker_publisher_;
   ros::Publisher gripper_velocity_publisher_;
   ros::Publisher gripper_velocity_marker_publisher_;
-  
+  ros::ServiceServer reset_service_;
   ros::Subscriber left_controller_pose_subscriber_;
   ros::Subscriber left_controller_joy_subscriber_;
   ros::Subscriber reset_pose_signal_subscriber_;
+  
 
   // ROS messages
-  geometry_msgs::PoseStamped initial_left_controller_pose_;
-  geometry_msgs::PoseStamped current_left_controller_pose_;
-  // TODO: Remove these parameters (use cylindrical coordinates instead)
-  geometry_msgs::PoseStamped initial_gripper_pose_;
-  geometry_msgs::PoseStamped current_gripper_pose_;
-  geometry_msgs::PoseStamped desired_gripper_pose_;
+  geometry_msgs::PointStamped shoulder_position_;
   geometry_msgs::Vector3 user_command_velocity_;
   geometry_msgs::Vector3 gripper_velocity_;
   geometry_msgs::Twist mobile_platform_velocity_;
@@ -170,18 +190,22 @@ class MotionControllerTeleoperation {
   bool is_orientation_change_enabled_;
   bool use_shared_controller_;  // false if using pure teleoperation
   bool use_sim_;  // true if running in simulation
+  bool is_shoulder_position_calibrated_;  // true if the initial shoulder point is calibrated
 
   // parameters
   double position_scale_;
   double orientation_scale_;
-  double linear_velocity_scale_;
-  double angular_velocity_scale_;
+  double linear_platform_velocity_scale_;
+  double angular_platform_velocity_scale_;
+  double initial_lateral_offset_;
 
   // [radian] angle difference between first joint yaw angle and control view direction
   double control_view_offset_;
-  CylindricalPose initial_gripper_cylindrical_pose_;
-  CylindricalPose current_gripper_cylindrical_pose_;
-  CylindricalPose desired_gripper_cylindrical_pose_;
+  HybridPose initial_gripper_hybrid_pose_;
+  HybridPose current_gripper_hybrid_pose_;
+  HybridPose desired_gripper_hybrid_pose_;
+  HybridPose initial_left_controller_hybrid_pose_;
+  HybridPose current_left_controller_hybrid_pose_;
 
   std::mutex desired_gripper_pose_mutex_;  // protect desired_gripper_pose_
   VelocityEstimator user_command_velocity_estimator_;
