@@ -11,15 +11,32 @@
 
 SharedControl::SharedControl(const ros::NodeHandle& nh)
     : nh_(nh), rate_(ros::Rate(10)), begin_recording_(false), 
-      intent_inference_(0.1) {
+      intent_inference_(0.1),
+      is_pick_assistance_active_(false) {
   this->parseParameters();
   this->initializePublishers();
   this->initializeSubscribers();
+  reset_client_ = nh_.serviceClient<std_srvs::Trigger>("reset_teleop_origin");
+  intent_inference_.setUseSim(use_sim_);
+  intent_inference_.registerResetPoseHandler([this]() -> bool {
+    return this->callResetPoseService();
+  });
 }
 
 /******************************************************
  *                  Public members                    *  
  ****************************************************** */
+
+bool SharedControl::callResetPoseService() {
+  std_srvs::Trigger srv;
+  if (reset_client_.call(srv)) {
+    // ROS_INFO("Reset teleop origin service call succeeded: %s", srv.response.message.c_str());
+    return srv.response.success;
+  } else {
+    ROS_ERROR("Failed to call reset_teleop_origin service");
+    return false;
+  }
+}
 
 void SharedControl::run_inference() {
   while (nh_.ok()) {
@@ -30,10 +47,16 @@ void SharedControl::run_inference() {
 }
 
 void SharedControl::run_inference_once() {
-  this->updateCurrentGripperPositionForIntentInference();
+  //// TODO: Specify the function according to the task
+  // Step 1. Initialization
+  intent_inference_.updateGripperPosition();
+  intent_inference_.updateRobotState();
+  intent_inference_.updateObjectPositionToTmBase();
+  // Step 2. Update belief
   intent_inference_.updateBelief();
-  this->publishIntentBeliefVisualization();
+  // Step 3. Publish results
   this->publishBlendingGripperPose();
+  this->publishIntentBeliefVisualization();
 }
 
 /******************************************************
@@ -105,29 +128,6 @@ void SharedControl::detectedObjectsCallback(
 void SharedControl::recordSignalCallback(
     const std_msgs::Bool::ConstPtr& signal) {
   begin_recording_ = true;
-  // // TODO: Remove this test code later
-  // { // test scope
-  //   detection_msgs::DetectedObject object1;
-  //   object1.label = "object1";
-  //   object1.frame = "odom";
-  //   object1.confidence = 1.0;
-  //   object1.centroid.x = 0.378;
-  //   object1.centroid.y = 0.755;
-  //   object1.centroid.z = 0.984;
-
-  //   detection_msgs::DetectedObject object2;
-  //   object2.label = "object2";
-  //   object2.frame = "odom";
-  //   object2.confidence = 1.0;
-  //   object2.centroid.x = 0.544;
-  //   object2.centroid.y = 0.775;
-  //   object2.centroid.z = 0.968;
-
-  //   detection_msgs::DetectedObjectArray recorded_objects;
-  //   recorded_objects.objects.push_back(object1);
-  //   recorded_objects.objects.push_back(object2);
-  //   intent_inference_.setRecordedObjects(recorded_objects);
-  // } // end test scope
 }
 
 void SharedControl::positionSafetyButtonSignalCallback(
@@ -157,13 +157,7 @@ void SharedControl::userDesiredGripperStatusCallback(
 void SharedControl::userCommandVelocityCallback(
     const geometry_msgs::Vector3::ConstPtr& user_command_velocity) {
   intent_inference_.setUserCommandVelocity(*user_command_velocity);
-}
-
-void SharedControl::updateCurrentGripperPositionForIntentInference() {
-  const std::string source_frame = use_sim_ ? "robotiq_85_base_link" : "tm_gripper";
-  const geometry_msgs::Point current_gripper_position =
-      tf2_listener_.lookupTransform<geometry_msgs::Point>("tm_base", source_frame);
-  intent_inference_.setGripperPosition(current_gripper_position);
+  user_command_velocity_ = *user_command_velocity;
 }
 
 void SharedControl::publishIntentBeliefVisualization() {
@@ -179,28 +173,30 @@ void SharedControl::publishBlendingGripperPose() {
 }
 
 geometry_msgs::PoseStamped SharedControl::getTargetPose() {
-  if (intent_inference_.isInLockedState()) {
-    is_previously_locked_ = true;
-    
+  static geometry_msgs::Point target_position;
+  static geometry_msgs::Quaternion target_orientation;
+  if (intent_inference_.isPickAssistanceActive()) {
+    if (is_pick_assistance_active_ == false) {
+      target_position = this->getTargetPosition();
+      target_orientation = this->getTargetOrientation();
+      is_pick_assistance_active_ = true;
+    }
+
     geometry_msgs::PoseStamped target_pose;
     target_pose.header.frame_id = "tm_base";
     target_pose.header.stamp = ros::Time::now();
-    target_pose.pose.position = this->getTargetPosition();
-    target_pose.pose.orientation = this->getTargetOrientation();
+    target_pose.pose.position = target_position;
+    target_pose.pose.orientation = target_orientation;
+
     return target_pose;
   }
 
-  if (is_previously_locked_) {
-    // LOCK to UNLOCK transition
-    std_msgs::Bool reset_pose_signal_;
-    reset_pose_signal_publisher_.publish(reset_pose_signal_);
-  }
-  is_previously_locked_ = false;
+  is_pick_assistance_active_ = false;
   return user_desired_gripper_pose_;
 }
 
 geometry_msgs::Point SharedControl::getTargetPosition() {
-  return intent_inference_.getPlannedPosition();
+  return intent_inference_.getTargetPosition();
 }
 
 geometry_msgs::Quaternion SharedControl::getTargetOrientation() {

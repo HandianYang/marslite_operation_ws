@@ -5,6 +5,7 @@
 #include <geometry_msgs/Vector3.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <std_msgs/Bool.h>
+#include <std_srvs/Trigger.h>
 
 #include "detection_msgs/DetectedObjectArray.h"
 #include "shared_control/intent_inference.h"
@@ -15,6 +16,8 @@
 class SharedControl {
  public:
   explicit SharedControl(const ros::NodeHandle& nh = ros::NodeHandle());
+
+  bool callResetPoseService();
 
   void run_inference();
 
@@ -32,7 +35,6 @@ class SharedControl {
   void userDesiredGripperStatusCallback(const std_msgs::Bool::ConstPtr& user_desired_gripper_status);
   void userCommandVelocityCallback(const geometry_msgs::Vector3::ConstPtr& user_command_velocity);
 
-  void updateCurrentGripperPositionForIntentInference();
   void publishIntentBeliefVisualization();
   void publishBlendingGripperPose();
   geometry_msgs::PoseStamped getTargetPose();
@@ -47,7 +49,7 @@ class SharedControl {
   ros::Publisher belief_visualization_publisher_;
   ros::Publisher reset_pose_signal_publisher_;
   ros::Publisher gripper_motion_state_publisher_;
-
+  ros::ServiceClient reset_client_;
   ros::Subscriber detected_objects_subscriber_;
   ros::Subscriber record_signal_subscriber_;
   ros::Subscriber position_safety_button_signal_subscriber_;
@@ -55,21 +57,22 @@ class SharedControl {
   ros::Subscriber user_desired_gripper_pose_subscriber_;
   ros::Subscriber user_desired_gripper_status_subscriber_;
   ros::Subscriber user_command_velocity_subscriber_;
+  
 
   // self-defined class instances
   IntentInference intent_inference_;
-  Tf2ListenerWrapper tf2_listener_;
 
   // ROS messages
   geometry_msgs::PoseStamped user_desired_gripper_pose_;
   std_msgs::Bool user_desired_gripper_status_;
   std_msgs::Bool position_safety_button_signal_;
   std_msgs::Bool orientation_safety_button_signal_;
+  geometry_msgs::Vector3 user_command_velocity_;
 
   // flags
   bool use_sim_;  // true if running in simulation
   bool begin_recording_;  // true if record_siganl is received
-  bool is_previously_locked_;  // true if intent_inference_ is in LOCK state
+  bool is_pick_assistance_active_;  // true if intent_inference_ is in LOCK state
 };
 
 #endif // #ifndef MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROL_H

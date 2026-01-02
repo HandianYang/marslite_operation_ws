@@ -9,14 +9,17 @@
  *                  Constructors                      *  
  ****************************************************** */
 
-IntentInference::IntentInference(const double& transition_probability)
-    : gripper_motion_state_(GripperMotionState::IDLE),
-      last_gripper_motion_state_(GripperMotionState::IDLE),
-      transition_probability_(transition_probability),
-      is_cooldown_timer_started_(false),
-      is_locked_timer_started_(false) {
+IntentInference::IntentInference(const double& transition_probability) :
+    robot_state_(RobotState::STANDBY),
+    transition_probability_(transition_probability),
+    is_inference_activated_(false),
+    is_reject_cooldown_timer_started_(false),
+    is_assist_dwell_timer_started_(false),
+    is_reset_pose_signal_transferred_(false),
+    is_reset_pose_completed_(false) {
   belief_ = {};
-  position_to_tm_base_ = {};
+  position_wrt_odom_ = {};
+  position_wrt_tm_base_ = {};
 }
 
 /******************************************************
@@ -26,10 +29,15 @@ IntentInference::IntentInference(const double& transition_probability)
 void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArray& recorded_objects) {
   recorded_objects_ = recorded_objects;
   belief_ = {};
-  position_to_tm_base_ = {};
+  position_wrt_odom_ = {};
+  position_wrt_tm_base_ = {};
   for (const detection_msgs::DetectedObject& obj : recorded_objects.objects) {
     belief_[obj] = 1.0 / recorded_objects.objects.size();
-    position_to_tm_base_[obj] = this->transformOdomToTMBase(obj.centroid);
+    geometry_msgs::PointStamped centroid;
+    centroid.header.frame_id = obj.frame;
+    centroid.point = obj.centroid;
+    position_wrt_odom_[obj] = tf2_listener_.transformData(centroid, "odom");
+    position_wrt_tm_base_[obj] = tf2_listener_.transformData(centroid, "tm_base");
   }
 }
 
@@ -45,7 +53,7 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
     marker.id = id++;
     marker.type = visualization_msgs::Marker::SPHERE;
     marker.action = visualization_msgs::Marker::ADD;
-    marker.pose.position = position_to_tm_base_[object];
+    marker.pose.position = position_wrt_tm_base_[object].point;
     marker.pose.orientation.w = 1.0;
     marker.scale.x = 0.01;
     marker.scale.y = 0.01;
@@ -54,6 +62,7 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
     marker.color.g = belief_value;
     marker.color.b = 0.0;
     marker.color.a = 0.8;
+    marker.lifetime = ros::Duration(1.0);
     marker_array.markers.push_back(marker);
 
     // text marker
@@ -63,7 +72,7 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
     text_marker.id = id++;
     text_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
     text_marker.action = visualization_msgs::Marker::ADD;
-    text_marker.pose.position = position_to_tm_base_[object];
+    text_marker.pose.position = position_wrt_tm_base_[object].point;
     text_marker.pose.position.z += 0.15;
     text_marker.scale.z = 0.03;
     text_marker.color.r = 1.0;
@@ -71,14 +80,15 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
     text_marker.color.b = 1.0;
     text_marker.color.a = 1.0;
     text_marker.text = std::to_string(belief_value);
+    text_marker.lifetime = ros::Duration(1.0);
     marker_array.markers.push_back(text_marker);
   }
 
-  // gripper_motion_state marker
+  // `robot_state` marker
   visualization_msgs::Marker gripper_marker;
   gripper_marker.header.frame_id = "tm_base";
   gripper_marker.header.stamp = ros::Time::now();
-  gripper_marker.ns = "gripper_motion_state";
+  gripper_marker.ns = "robot_state";
   gripper_marker.id = id++;
   gripper_marker.type = visualization_msgs::Marker::SPHERE;
   gripper_marker.action = visualization_msgs::Marker::ADD;
@@ -90,39 +100,40 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
   gripper_marker.scale.y = 0.1;
   gripper_marker.scale.z = 0.1;
   gripper_marker.color.a = 0.2;
+  gripper_marker.lifetime = ros::Duration(1.0);
 
-  switch (gripper_motion_state_) {
-    case GripperMotionState::UNLOCKED:
+  switch (robot_state_) {
+    case RobotState::PICK_MANUAL:
       // light green
       gripper_marker.color.r = 0.6;
       gripper_marker.color.g = 1.0;
       gripper_marker.color.b = 0.6;
     break;
-    case GripperMotionState::LOCKED:
+    case RobotState::PICK_ASSIST:
       // green
       gripper_marker.color.r = 0.0;
       gripper_marker.color.g = 1.0;
       gripper_marker.color.b = 0.0;
     break;
-    case GripperMotionState::RETREATED:
+    case RobotState::PICK_REJECT:
       // red
       gripper_marker.color.r = 1.0;
       gripper_marker.color.g = 0.0;
       gripper_marker.color.b = 0.0;
     break;
-    case GripperMotionState::REACHED:
+    case RobotState::PICK_READY:
       // yellow
       gripper_marker.color.r = 1.0;
       gripper_marker.color.g = 1.0;
       gripper_marker.color.b = 0.0;
     break;
-    case GripperMotionState::GRASPED:
+    case RobotState::PICK_GRASP:
       // blue
       gripper_marker.color.r = 0.0;
       gripper_marker.color.g = 0.0;
       gripper_marker.color.b = 1.0;
     break;
-    case GripperMotionState::IDLE:
+    case RobotState::STANDBY:
     default:
       // gray
       gripper_marker.color.r = 0.5;
@@ -135,10 +146,109 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
   return marker_array;
 }
 
+void IntentInference::updateObjectPositionToTmBase() {
+  for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
+    position_wrt_tm_base_[recorded_object] = tf2_listener_.transformData(
+        position_wrt_odom_[recorded_object], "tm_base"
+    );
+  }
+}
+
+void IntentInference::updateGripperPosition() {
+  const std::string source_frame = use_sim_ ? "robotiq_85_base_link" : "tm_gripper";
+  gripper_position_ = tf2_listener_.lookupTransform<geometry_msgs::Point>("tm_base", source_frame);
+}
+
+void IntentInference::updateRobotState() {
+  if (!is_positional_safety_button_pressed_) {
+    // ----- Priority 1: safety button not pressed (STANDBY) -----
+    robot_state_ = RobotState::STANDBY;
+  } else if (gripper_status_.data) {
+    // ----- Priority 2: gripper is closed (PICK_GRASP) -----
+    if (this->isNearTarget())
+      this->removeTargetFromRecordedObjects();
+    robot_state_ = RobotState::PICK_GRASP;
+  } else if (this->isNearTarget()) {
+    // ----- Priority 3: gripper is near target (PICK_READY) -----
+    if (robot_state_ == RobotState::PICK_ASSIST && !this->isTargetReached()) {
+      // [Exception] remain PICK_ASSIST if the planned position has not been reached
+      robot_state_ = RobotState::PICK_ASSIST;
+    } else {
+      /// TODO: Make sure this function works fine
+      if (is_reset_pose_signal_transferred_ == false) {
+        if (reset_pose_handler_) {
+          is_reset_pose_completed_ = reset_pose_handler_();
+          is_reset_pose_signal_transferred_ = true;
+        } else {
+          ROS_WARN("reset_pose_handler_");
+        }
+      }
+
+      if (is_reset_pose_completed_) {
+        robot_state_ = RobotState::PICK_READY;
+      }
+    }
+  } else {
+    // ----- Finite State Machine -----
+    switch (robot_state_) {
+      case RobotState::STANDBY:
+        if (is_reject_cooldown_timer_started_) {
+          // The PICK_REJECT cooldown has not finished
+          // -> back to PICK_REJECT
+          robot_state_ = RobotState::PICK_REJECT;
+        } else {
+          robot_state_ = RobotState::PICK_MANUAL;
+        }
+      break;
+      case RobotState::PICK_MANUAL:
+        if (this->isInPickArea() && this->isTowardTarget() && this->isConfidenceHighEnough()) {
+          if (!is_assist_dwell_timer_started_) {
+            this->triggerAssistDwellTimer();
+            is_assist_dwell_timer_started_ = true;
+          }
+
+          if (this->isAssistDwellTimePassed()) {
+            robot_state_ = RobotState::PICK_ASSIST;
+            is_assist_dwell_timer_started_ = false;
+          }
+        } else {
+          // remain PICK_MANUAL
+          is_assist_dwell_timer_started_ = false;
+        } 
+        is_reset_pose_signal_transferred_ = false;
+        is_reset_pose_completed_ = false;
+      break;
+      case RobotState::PICK_ASSIST:
+        if (this->isAwayFromTarget()) {
+          robot_state_ = RobotState::PICK_REJECT;
+        }
+        // else: remain LOCKED
+      break;
+      case RobotState::PICK_REJECT:
+        if (!is_reject_cooldown_timer_started_) {
+          this->triggerRejectCooldownTimer();
+          is_reject_cooldown_timer_started_ = true;
+        }
+
+        if (this->isRejectCooldownTimePassed()) {
+          // Transfer to PICK_MANUAL after cooldown
+          robot_state_ = RobotState::PICK_MANUAL;
+          is_reject_cooldown_timer_started_ = false;
+        }
+        // else: remain RETREATED
+      break;
+      case RobotState::PICK_READY:
+        // Not near the target anymore -> transfer back to PICK_MANUAL
+        robot_state_ = RobotState::PICK_MANUAL;
+      break;
+      default: break;
+    }
+    
+  }
+}
+
 void IntentInference::updateBelief() {
-  this->updatePositionToBaseLink();
-  this->updateGripperMotionState();
-  if (gripper_motion_state_ != GripperMotionState::UNLOCKED)  return;
+  if (robot_state_ != RobotState::PICK_MANUAL || recorded_objects_.objects.empty())  return;
 
   // Update belief using Bayesian inference with Markov transition model
   detection_msgs::ObjectBeliefMap new_belief;
@@ -146,10 +256,8 @@ void IntentInference::updateBelief() {
     geometry_msgs::Vector3 goal_direction = this->getGoalDirection(recorded_object);
 
     // (1) direction_likelihood
-    // TODO: Test new likelihood
     const double direction_similarity = getCosineSimilarity(user_command_velocity_, goal_direction);
     const double direction_likelihood = (direction_similarity + 1) / 2;  // [-1, 1] -> [0, 1]
-    // const double direction_likelihood = std::exp(direction_similarity - 1); // [-1, 1] -> [e^(-2), e^0]
 
     // (2) proximity likelihood
     const double goal_distance = std::sqrt(
@@ -170,7 +278,6 @@ void IntentInference::updateBelief() {
     }
     new_belief[recorded_object] = likelihood * sum_transitions;
   }
-
   belief_ = new_belief;
 
   this->normalizeBelief();
@@ -181,177 +288,121 @@ void IntentInference::updateBelief() {
  *                  Private members                   *  
  ****************************************************** */
 
-void IntentInference::updatePositionToBaseLink() {
-  for (const detection_msgs::DetectedObject& recorded_object : recorded_objects_.objects) {
-    position_to_tm_base_[recorded_object] =
-        this->transformOdomToTMBase(recorded_object.centroid);
-  }
-}
-
-geometry_msgs::Point IntentInference::transformOdomToTMBase(const geometry_msgs::Point& point_in_odom) {
-  geometry_msgs::PointStamped point_stamped_in_odom;
-  point_stamped_in_odom.header.frame_id = "odom";
-  point_stamped_in_odom.header.stamp = ros::Time(0);
-  point_stamped_in_odom.point = point_in_odom;
-  
-  geometry_msgs::TransformStamped odom_to_tm_base_transform
-      = tf2_listener_.lookupTransform<geometry_msgs::TransformStamped>("tm_base", "odom");
-  geometry_msgs::PointStamped point_stamped_in_tm_base;
-  tf2::doTransform(point_stamped_in_odom, point_stamped_in_tm_base, odom_to_tm_base_transform);
-  
-  return point_stamped_in_tm_base.point;
-}
-
-void IntentInference::updateGripperMotionState() {
-  last_gripper_motion_state_ = gripper_motion_state_;
-  if (last_gripper_motion_state_ == GripperMotionState::UNLOCKED || 
-      last_gripper_motion_state_ == GripperMotionState::LOCKED ||
-      last_gripper_motion_state_ == GripperMotionState::REACHED) {
-    this->calculatePlannedPositionAndTargetDirection();
-  }
-
-  if (!is_positional_safety_button_pressed_ || recorded_objects_.objects.empty()) {
-    gripper_motion_state_ = GripperMotionState::IDLE;
-  } else if (gripper_status_.data) {
-    gripper_motion_state_ = GripperMotionState::GRASPED;
-  } else if (this->isNearTarget()) {
-    if (last_gripper_motion_state_ == GripperMotionState::LOCKED && !this->isPlannedPositionReached()) {
-      // [Exception] remain LOCKED if the planned position has not been reached
-      gripper_motion_state_ = GripperMotionState::LOCKED;
-    } else {
-      gripper_motion_state_ = GripperMotionState::REACHED;
-    }
-  } else {
-    // finite state machine
-    switch (last_gripper_motion_state_) {
-      case GripperMotionState::IDLE:
-        if (is_cooldown_timer_started_) {
-          // The RETREATED cooldown has not finished
-          gripper_motion_state_ = GripperMotionState::RETREATED;
-        } else {
-          gripper_motion_state_ = GripperMotionState::UNLOCKED;
-        }
-      break;
-      case GripperMotionState::UNLOCKED:
-        if (this->isTowardTarget() && confidence_ >= kLockTargetConfidenceThreshold) {
-          if (!is_locked_timer_started_) {
-            this->triggerLockedTimer();
-            is_locked_timer_started_ = true;
+void IntentInference::removeTargetFromRecordedObjects() {
+  const detection_msgs::DetectedObject target = this->getTargetObject();
+  if (target == detection_msgs::DetectedObject())
+    return;
+  recorded_objects_.objects.erase(
+      std::remove_if(
+          recorded_objects_.objects.begin(),
+          recorded_objects_.objects.end(),
+          [&target](const detection_msgs::DetectedObject& obj) {
+              return obj.label == target.label && obj.frame == target.frame && obj.centroid == target.centroid;
           }
-          if (this->isLockedTimePassed()) {
-            gripper_motion_state_ = GripperMotionState::LOCKED;
-            is_locked_timer_started_ = false;
-          }
-        } else {
-          // remain UNLOCKED
-          is_locked_timer_started_ = false;
-        } 
-      break;
-      case GripperMotionState::LOCKED:
-        if (this->isAwayFromTarget()) {
-          // ROS_INFO_STREAM("LOCKED to RETREATED. is_cooldown_timer_started_: " << is_cooldown_timer_started_);
-          gripper_motion_state_ = GripperMotionState::RETREATED;
-        }
-        // else: remain LOCKED
-      break;
-      case GripperMotionState::RETREATED:
-        if (!is_cooldown_timer_started_) {
-          // ROS_INFO("RETREATED cooldown started");
-          this->triggerCooldownTimer();
-          is_cooldown_timer_started_ = true;
-        }
-        if (this->isCooldownTimePassed()) {
-          // ROS_INFO("RETREATED to UNLOCKED");
-          gripper_motion_state_ = GripperMotionState::UNLOCKED;
-          is_cooldown_timer_started_ = false;
-        }
-        // else: remain RETREATED
-      break;
-      default: break;
-    }
-  }
-  // ROS_INFO_STREAM("New state: " << toString(gripper_motion_state_));
-}
-
-void IntentInference::calculatePlannedPositionAndTargetDirection() {
-  // Shift the position ahead kTargetShiftDistance
-  geometry_msgs::Point target_position = this->getMostLikelyGoalPosition();
-  target_direction_.x = target_position.x - gripper_position_.x;
-  target_direction_.y = target_position.y - gripper_position_.y;
-  target_direction_.z = target_position.z - gripper_position_.z;
-  const double target_distance = std::sqrt(
-    target_direction_.x * target_direction_.x + 
-    target_direction_.y * target_direction_.y +
-    target_direction_.z * target_direction_.z
+      ),
+      recorded_objects_.objects.end()
   );
-  geometry_msgs::Vector3 scaled_target_direction;
-  scaled_target_direction.x = target_direction_.x / target_distance * kTargetShiftDistance;
-  scaled_target_direction.y = target_direction_.y / target_distance * kTargetShiftDistance;
-  scaled_target_direction.z = target_direction_.z / target_distance * kTargetShiftDistance;
+  belief_.erase(target);
+  position_wrt_odom_.erase(target);
+  position_wrt_tm_base_.erase(target);
 
-  planned_position_.x = target_position.x - scaled_target_direction.x;
-  planned_position_.y = target_position.y - scaled_target_direction.y;
-  planned_position_.z = target_position.z - scaled_target_direction.z;
+  if (!recorded_objects_.objects.empty()) {
+    for (const detection_msgs::DetectedObject& obj : recorded_objects_.objects) {
+      belief_[obj] = 1.0 / recorded_objects_.objects.size();
+    }
+  }
 }
 
 const bool IntentInference::isNearTarget() const {
-  if (this->isEmptyTargetDirection())  return false;
+  const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
+  if (target_direction == geometry_msgs::Vector3())  return false;
   const double target_distance = std::sqrt(
-      target_direction_.x * target_direction_.x + 
-      target_direction_.y * target_direction_.y +
-      target_direction_.z * target_direction_.z
+      target_direction.x * target_direction.x +
+      target_direction.y * target_direction.y +
+      target_direction.z * target_direction.z
   );
   return target_distance < kNearDistanceThreshold;
 }
 
-const bool IntentInference::isPlannedPositionReached() const {
-  geometry_msgs::Vector3 direction_to_planned_position;
-  direction_to_planned_position.x = planned_position_.x - gripper_position_.x;
-  direction_to_planned_position.y = planned_position_.y - gripper_position_.y;
-  direction_to_planned_position.z = planned_position_.z - gripper_position_.z;
-  const double distance_to_planned_position = std::sqrt(
-      direction_to_planned_position.x * direction_to_planned_position.x + 
-      direction_to_planned_position.y * direction_to_planned_position.y +
-      direction_to_planned_position.z * direction_to_planned_position.z
+const bool IntentInference::isTargetReached() const {
+  const geometry_msgs::Point target_position = this->getTargetPosition();
+  const double distance = std::sqrt(
+      (target_position.x - gripper_position_.x) * (target_position.x - gripper_position_.x) +
+      (target_position.y - gripper_position_.y) * (target_position.y - gripper_position_.y) +
+      (target_position.z - gripper_position_.z) * (target_position.z - gripper_position_.z)
   );
-  return distance_to_planned_position < kPositionTolerance;
+  return distance < kPositionTolerance;
 }
 
-void IntentInference::triggerLockedTimer() {
-  locked_timer_.start_time = locked_timer_.current_time = ros::Time::now();
-}
+const bool IntentInference::isInPickArea() const {
+  for (const auto& [object, prob] : belief_) {
+    const double dx = position_wrt_tm_base_.at(object).point.x - gripper_position_.x;
+    const double dy = position_wrt_tm_base_.at(object).point.y - gripper_position_.y;
+    const double dz = position_wrt_tm_base_.at(object).point.z - gripper_position_.z;
+    const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-const bool IntentInference::isLockedTimePassed() {
-  locked_timer_.current_time = ros::Time::now();
-  return locked_timer_.getTimeDifference() >= kLockedTime;
+    if (distance < kPickAreaDistanceThreshold) {
+      return true;
+    }
+  }
+  return false;
 }
 
 const bool IntentInference::isTowardTarget() const {
-  if (this->isEmptyTargetDirection())  return false;
-  const double direction_similarity = this->getCosineSimilarity(user_command_velocity_, target_direction_);
-  return direction_similarity > kLockedSimilarityThreshold;
+  const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
+  const double mag = std::sqrt(
+      target_direction.x * target_direction.x +
+      target_direction.y * target_direction.y +
+      target_direction.z * target_direction.z
+  );
+  if (mag < 1e-6)  return false;  // avoid divide-by-zero
+  
+  const double direction_similarity = this->getCosineSimilarity(
+      user_command_velocity_,
+      target_direction
+  );
+  return direction_similarity > kTowardTargetDirectionSimilarityThreshold;
+}
+
+void IntentInference::triggerAssistDwellTimer() {
+  assist_dwell_timer_.start_time = assist_dwell_timer_.current_time = ros::Time::now();
+}
+
+const bool IntentInference::isAssistDwellTimePassed() {
+  assist_dwell_timer_.current_time = ros::Time::now();
+  return assist_dwell_timer_.getTimeDifference() >= kAssistDwellTime;
 }
 
 const bool IntentInference::isAwayFromTarget() const {
-  if (this->isEmptyTargetDirection())  return false;
-  const double direction_similarity = this->getCosineSimilarity(user_command_velocity_, target_direction_);
-  return direction_similarity < kRetreatSimilarityThreshold;
+  const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
+  const double mag = std::sqrt(
+      target_direction.x * target_direction.x +
+      target_direction.y * target_direction.y +
+      target_direction.z * target_direction.z
+  );
+  if (mag < 1e-6)  return false;  // avoid divide-by-zero
+
+  const double direction_similarity = this->getCosineSimilarity(
+      user_command_velocity_,
+      target_direction
+  );
+  return direction_similarity < kAwayTargetDirectionSimilarityThreshold;
 }
 
-void IntentInference::triggerCooldownTimer() {
+void IntentInference::triggerRejectCooldownTimer() {
   cooldown_timer_.start_time = cooldown_timer_.current_time = ros::Time::now();
 }
 
-const bool IntentInference::isCooldownTimePassed() {
+const bool IntentInference::isRejectCooldownTimePassed() {
   cooldown_timer_.current_time = ros::Time::now();
-  return cooldown_timer_.getTimeDifference() >= kRetreatCooldownTime;
+  return cooldown_timer_.getTimeDifference() >= kRejectCooldownTime;
 }
 
 geometry_msgs::Vector3 IntentInference::getGoalDirection(const detection_msgs::DetectedObject& goal) const { 
   geometry_msgs::Vector3 goal_direction;
-  goal_direction.x = position_to_tm_base_.at(goal).x - gripper_position_.x;
-  goal_direction.y = position_to_tm_base_.at(goal).y - gripper_position_.y;
-  goal_direction.z = position_to_tm_base_.at(goal).z - gripper_position_.z;
+  goal_direction.x = position_wrt_tm_base_.at(goal).point.x - gripper_position_.x;
+  goal_direction.y = position_wrt_tm_base_.at(goal).point.y - gripper_position_.y;
+  goal_direction.z = position_wrt_tm_base_.at(goal).point.z - gripper_position_.z;
   return goal_direction;
 }
 
@@ -386,7 +437,7 @@ void IntentInference::calculateConfidence() {
   std::sort(probs.begin(), probs.end(), std::greater<double>());
 
   if (probs.size() >= 2) {
-    // confidence = highest probability - second highest probability
+    // confidence -> highest probability - second highest probability
     confidence_ = probs[0] - probs[1];
   } else if (probs.size() == 1) {
     // only one object -> full confidence

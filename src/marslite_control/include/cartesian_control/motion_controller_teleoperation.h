@@ -198,6 +198,7 @@ class MotionControllerTeleoperation {
   double linear_platform_velocity_scale_;
   double angular_platform_velocity_scale_;
   double initial_lateral_offset_;
+  double accumulated_radius_difference_;
 
   // [radian] angle difference between first joint yaw angle and control view direction
   double control_view_offset_;
@@ -206,6 +207,7 @@ class MotionControllerTeleoperation {
   HybridPose desired_gripper_hybrid_pose_;
   HybridPose initial_left_controller_hybrid_pose_;
   HybridPose current_left_controller_hybrid_pose_;
+  HybridPose previous_left_controller_hybrid_pose_; // last frame of current_left_controller_hybrid_pose_
 
   std::mutex desired_gripper_pose_mutex_;  // protect desired_gripper_pose_
   VelocityEstimator user_command_velocity_estimator_;

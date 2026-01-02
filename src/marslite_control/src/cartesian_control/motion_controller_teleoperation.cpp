@@ -363,6 +363,8 @@ void MotionControllerTeleoperation::initializeGripperPose() {
 
 void MotionControllerTeleoperation::initializeLeftControllerPose() {
   initial_left_controller_hybrid_pose_ = current_left_controller_hybrid_pose_;
+  previous_left_controller_hybrid_pose_ = current_left_controller_hybrid_pose_;
+  accumulated_radius_difference_ = 0.0;
 }
 
 void MotionControllerTeleoperation::updateGripperPose() {
@@ -464,13 +466,28 @@ void MotionControllerTeleoperation::calculateDesiredGripperPosition() {
 }
 
 CylindricalPoint MotionControllerTeleoperation::getCylindricalPositionDifference() {
+  // Since the radius cannot be obtained directly from cylindrical coordinates,
+  //   we calculate the radius difference by comparing the previous and current
+  //   left controller positions in Cartesian coordinates.
+  const double previous_hand_radius = std::hypot(
+      previous_left_controller_hybrid_pose_.cartesian_position.x,
+      previous_left_controller_hybrid_pose_.cartesian_position.y
+  );
+  const double current_hand_radius = std::hypot(
+      current_left_controller_hybrid_pose_.cartesian_position.x,
+      current_left_controller_hybrid_pose_.cartesian_position.y
+  );
+  const double step_radius = current_hand_radius - previous_hand_radius;
+  accumulated_radius_difference_ += step_radius;
+  previous_left_controller_hybrid_pose_ = current_left_controller_hybrid_pose_;
+
+  // Calculate full cylindrical position difference
   CylindricalPoint position_difference;
+  position_difference.radius = accumulated_radius_difference_;
   position_difference.yaw = this->restrictAngleWithinPI(
       current_left_controller_hybrid_pose_.cylindrical_position.yaw -
       initial_left_controller_hybrid_pose_.cylindrical_position.yaw);
-  position_difference.radius =
-      current_left_controller_hybrid_pose_.cylindrical_position.radius -
-      initial_left_controller_hybrid_pose_.cylindrical_position.radius;
+  position_difference.radius = accumulated_radius_difference_;
   position_difference.height =
       current_left_controller_hybrid_pose_.cylindrical_position.height -
       initial_left_controller_hybrid_pose_.cylindrical_position.height;
