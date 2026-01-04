@@ -5,6 +5,8 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <std_msgs/String.h>
 
+#include "detection_msgs/RobotState.h"
+
 /******************************************************
  *                  Constructors                      *  
  ****************************************************** */
@@ -30,7 +32,6 @@ SharedControl::SharedControl(const ros::NodeHandle& nh)
 bool SharedControl::callResetPoseService() {
   std_srvs::Trigger srv;
   if (reset_client_.call(srv)) {
-    // ROS_INFO("Reset teleop origin service call succeeded: %s", srv.response.message.c_str());
     return srv.response.success;
   } else {
     ROS_ERROR("Failed to call reset_teleop_origin service");
@@ -47,16 +48,23 @@ void SharedControl::run_inference() {
 }
 
 void SharedControl::run_inference_once() {
-  //// TODO: Specify the function according to the task
-  // Step 1. Initialization
+  /// TODO: Specify the function according to the task
+
+  /// Step 1. Initialization
   intent_inference_.updateGripperPosition();
-  intent_inference_.updateRobotState();
   intent_inference_.updateObjectPositionToTmBase();
-  // Step 2. Update belief
+  intent_inference_.updateRobotState();
+
+  /// Step 2. Update belief
   intent_inference_.updateBelief();
-  // Step 3. Publish results
+
+  /// Step 3. Publish results
   this->publishBlendingGripperPose();
+  // Publish for visualization
   this->publishIntentBeliefVisualization();
+  // Publish for rosbag
+  this->publishObjectsWithBelief();
+  this->publishRobotState();
 }
 
 /******************************************************
@@ -78,11 +86,11 @@ void SharedControl::initializePublishers() {
   belief_visualization_publisher_ = nh_.advertise<visualization_msgs::MarkerArray>(
       "/marslite_control/intent_belief_marker", 1
   );
-  reset_pose_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
-      "/marslite_control/lock_state_signal", 1
+  robot_state_publisher_ = nh_.advertise<detection_msgs::RobotState>(
+      "/marslite_control/robot_state", 1
   );
-  gripper_motion_state_publisher_ = nh_.advertise<std_msgs::String>(
-      "/marslite_control/gripper_motion_state", 1
+  objects_with_belief_publisher_ = nh_.advertise<detection_msgs::DetectedObjectArray>(
+      "/marslite_control/objects_with_belief", 1
   );
 }
 
@@ -160,16 +168,29 @@ void SharedControl::userCommandVelocityCallback(
   user_command_velocity_ = *user_command_velocity;
 }
 
+void SharedControl::publishBlendingGripperPose() {
+  geometry_msgs::PoseStamped target_pose = this->getTargetPose();
+  if (target_pose.header.frame_id.empty())  return;
+  desired_gripper_pose_publisher_.publish(target_pose);
+}
+
 void SharedControl::publishIntentBeliefVisualization() {
   visualization_msgs::MarkerArray belief_visualization
       = intent_inference_.getBeliefVisualization();
   belief_visualization_publisher_.publish(belief_visualization);
 }
 
-void SharedControl::publishBlendingGripperPose() {
-  geometry_msgs::PoseStamped target_pose = this->getTargetPose();
-  if (target_pose.header.frame_id.empty())  return;
-  desired_gripper_pose_publisher_.publish(target_pose);
+void SharedControl::publishRobotState() {
+  detection_msgs::RobotState robot_state_msg;
+  robot_state_msg.id = static_cast<int8_t>(intent_inference_.getRobotState());
+  robot_state_msg.name = toString(intent_inference_.getRobotState());
+  robot_state_publisher_.publish(robot_state_msg);
+}
+
+void SharedControl::publishObjectsWithBelief() {
+  detection_msgs::DetectedObjectArray objects_with_belief
+      = intent_inference_.getObjectsWithBelief();
+  objects_with_belief_publisher_.publish(objects_with_belief);
 }
 
 geometry_msgs::PoseStamped SharedControl::getTargetPose() {

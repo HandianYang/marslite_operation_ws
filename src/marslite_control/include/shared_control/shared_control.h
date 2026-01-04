@@ -35,8 +35,10 @@ class SharedControl {
   void userDesiredGripperStatusCallback(const std_msgs::Bool::ConstPtr& user_desired_gripper_status);
   void userCommandVelocityCallback(const geometry_msgs::Vector3::ConstPtr& user_command_velocity);
 
-  void publishIntentBeliefVisualization();
   void publishBlendingGripperPose();
+  void publishIntentBeliefVisualization();
+  void publishRobotState();
+  void publishObjectsWithBelief();
   geometry_msgs::PoseStamped getTargetPose();
   geometry_msgs::Point getTargetPosition();
   geometry_msgs::Quaternion getTargetOrientation();
@@ -47,8 +49,8 @@ class SharedControl {
   ros::Publisher desired_gripper_pose_publisher_;
   ros::Publisher desired_gripper_status_publisher_;
   ros::Publisher belief_visualization_publisher_;
-  ros::Publisher reset_pose_signal_publisher_;
-  ros::Publisher gripper_motion_state_publisher_;
+  ros::Publisher robot_state_publisher_;
+  ros::Publisher objects_with_belief_publisher_;
   ros::ServiceClient reset_client_;
   ros::Subscriber detected_objects_subscriber_;
   ros::Subscriber record_signal_subscriber_;
@@ -57,7 +59,6 @@ class SharedControl {
   ros::Subscriber user_desired_gripper_pose_subscriber_;
   ros::Subscriber user_desired_gripper_status_subscriber_;
   ros::Subscriber user_command_velocity_subscriber_;
-  
 
   // self-defined class instances
   IntentInference intent_inference_;

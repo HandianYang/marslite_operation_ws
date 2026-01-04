@@ -13,8 +13,7 @@
 #include "detection_msgs/DetectedObjectArray.h"
 #include "utils/tf2_listener_wrapper.h"
 
-
-namespace detection_msgs{
+namespace detection_msgs {
 
 struct DetectedObjectComparator {
   inline const bool operator()(
@@ -112,6 +111,21 @@ class IntentInference {
 
   inline void setSafetyButtonStatus(const bool& is_pressed) {
     is_positional_safety_button_pressed_ = is_pressed;
+  }
+
+  inline detection_msgs::DetectedObjectArray getObjectsWithBelief() const {
+    detection_msgs::DetectedObjectArray objects_with_belief;
+    for (const auto& [object, prob] : belief_) {
+      objects_with_belief.objects.push_back(object);
+      objects_with_belief.objects.back().frame = "tm_base";
+      objects_with_belief.objects.back().centroid = position_wrt_tm_base_.at(object).point;
+      objects_with_belief.objects.back().confidence = prob;
+    }
+    return objects_with_belief;
+  }
+
+  inline RobotState getRobotState() const {
+    return robot_state_;
   }
 
   inline geometry_msgs::Point getGripperPosition() const {

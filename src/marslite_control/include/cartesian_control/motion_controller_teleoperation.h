@@ -124,7 +124,7 @@ class MotionControllerTeleoperation {
     geometry_msgs::PoseStamped desired_pose;
     desired_pose.header = desired_gripper_hybrid_pose_.header;
     desired_pose.pose = desired_gripper_hybrid_pose_.toCartesianPose();
-    gripper_pose_publisher_.publish(desired_pose);
+    desired_gripper_pose_publisher_.publish(desired_pose);
   }
 
   inline void publisherGripperVelocity() {
@@ -157,7 +157,8 @@ class MotionControllerTeleoperation {
   ros::NodeHandle nh_;
   ros::Rate loop_rate_;
   ros::Publisher target_frame_publisher_; // for teleoperateToPose() usage
-  ros::Publisher gripper_pose_publisher_; // for pure teleoperation & shared control
+  ros::Publisher desired_gripper_pose_publisher_; // for pure teleoperation & shared control
+  ros::Publisher current_gripper_pose_publisher_;
   ros::Publisher gripper_status_publisher_;
   ros::Publisher record_signal_publisher_;
   ros::Publisher position_safety_button_signal_publisher_;

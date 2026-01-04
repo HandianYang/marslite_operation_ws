@@ -26,14 +26,7 @@ add_message_files(
   FILES
   DetectedObject.msg
   DetectedObjectArray.msg
-)
-
-add_service_files(
-  FILES
-  DriveToInitialPoint.srv
-  DriveToObservePoint.srv
-  GraspObjectWithID.srv
-  RecordObjectPosition.srv
+  RobotState.msg
 )
 
 generate_messages(

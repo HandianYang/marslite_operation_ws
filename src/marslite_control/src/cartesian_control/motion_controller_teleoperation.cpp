@@ -167,14 +167,17 @@ void MotionControllerTeleoperation::initializePublishers() {
   // to the `use_shared_controller_` parameter.
   // - use_shared_controller_ = true: published to shared controller
   // - use_shared_controller_ = false: published to the robot
-  const std::string gripper_pose_topic = use_shared_controller_ ?
+  const std::string desired_gripper_pose_topic = use_shared_controller_ ?
       "/marslite_control/user_desired_gripper_pose" :
       "/target_frame";
   const std::string gripper_status_topic = use_shared_controller_ ?
       "/marslite_control/user_desired_gripper_status" :
       "/gripper/cmd_gripper";
   
-  gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(gripper_pose_topic, 1);
+  desired_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
+      desired_gripper_pose_topic, 1);
+  current_gripper_pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
+      "/marslite_control/gripper_pose", 1);
   gripper_status_publisher_ = nh_.advertise<std_msgs::Bool>(gripper_status_topic, 1);
   position_safety_button_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
       "/marslite_control/position_safety_button_signal", 1);
@@ -375,6 +378,10 @@ void MotionControllerTeleoperation::updateGripperPose() {
       ),
       control_view_offset_
   );
+
+  geometry_msgs::PoseStamped current_gripper_pose_msg
+      = current_gripper_hybrid_pose_.toCartesianPoseStamped();
+  current_gripper_pose_publisher_.publish(current_gripper_pose_msg);
 }
 
 void MotionControllerTeleoperation::updateGripperVelocity() {
