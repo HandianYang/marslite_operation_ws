@@ -8,7 +8,7 @@
  ****************************************************** */
 
 MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHandle& nh)
-    : nh_(nh), loop_rate_(10), initial_lateral_offset_(0.0),
+    : nh_(nh), loop_rate_(50), initial_lateral_offset_(0.0),
       is_position_change_enabled_(false),
       is_orientation_change_enabled_(false),
       is_shoulder_position_calibrated_(false) {

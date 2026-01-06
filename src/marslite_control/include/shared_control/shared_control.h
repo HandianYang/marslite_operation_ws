@@ -35,17 +35,21 @@ class SharedControl {
   void userDesiredGripperStatusCallback(const std_msgs::Bool::ConstPtr& user_desired_gripper_status);
   void userCommandVelocityCallback(const geometry_msgs::Vector3::ConstPtr& user_command_velocity);
 
-  void publishBlendingGripperPose();
+  void publishBlendedGripperPose();
+  geometry_msgs::PoseStamped getBlendedPose();
+  geometry_msgs::Point getBlendedPosition();
+  const double calculateAssistanceOffset(const double& distance_to_target);
+  geometry_msgs::Quaternion getBlendedOrientation();
+
   void publishIntentBeliefVisualization();
+  
   void publishRobotState();
+  
   void publishObjectsWithBelief();
-  geometry_msgs::PoseStamped getTargetPose();
-  geometry_msgs::Point getTargetPosition();
-  geometry_msgs::Quaternion getTargetOrientation();
 
   // ROS mechanisms
   ros::NodeHandle nh_;
-  ros::Rate rate_;
+  ros::Rate loop_rate_;
   ros::Publisher desired_gripper_pose_publisher_;
   ros::Publisher desired_gripper_status_publisher_;
   ros::Publisher belief_visualization_publisher_;
@@ -73,7 +77,6 @@ class SharedControl {
   // flags
   bool use_sim_;  // true if running in simulation
   bool begin_recording_;  // true if record_siganl is received
-  bool is_pick_assistance_active_;  // true if intent_inference_ is in LOCK state
 };
 
 #endif // #ifndef MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROL_H

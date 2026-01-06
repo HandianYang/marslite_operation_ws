@@ -12,9 +12,8 @@
  ****************************************************** */
 
 SharedControl::SharedControl(const ros::NodeHandle& nh)
-    : nh_(nh), rate_(ros::Rate(10)), begin_recording_(false), 
-      intent_inference_(0.1),
-      is_pick_assistance_active_(false) {
+    : nh_(nh), loop_rate_(ros::Rate(50)), begin_recording_(false), 
+      intent_inference_(0.1) {
   this->parseParameters();
   this->initializePublishers();
   this->initializeSubscribers();
@@ -42,7 +41,7 @@ bool SharedControl::callResetPoseService() {
 void SharedControl::run_inference() {
   while (nh_.ok()) {
     this->run_inference_once();
-    ros::Rate(10).sleep();
+    loop_rate_.sleep();
     ros::spinOnce();
   }
 }
@@ -59,7 +58,7 @@ void SharedControl::run_inference_once() {
   intent_inference_.updateBelief();
 
   /// Step 3. Publish results
-  this->publishBlendingGripperPose();
+  this->publishBlendedGripperPose();
   // Publish for visualization
   this->publishIntentBeliefVisualization();
   // Publish for rosbag
@@ -168,10 +167,66 @@ void SharedControl::userCommandVelocityCallback(
   user_command_velocity_ = *user_command_velocity;
 }
 
-void SharedControl::publishBlendingGripperPose() {
-  geometry_msgs::PoseStamped target_pose = this->getTargetPose();
+void SharedControl::publishBlendedGripperPose() {
+  geometry_msgs::PoseStamped target_pose = this->getBlendedPose();
   if (target_pose.header.frame_id.empty())  return;
   desired_gripper_pose_publisher_.publish(target_pose);
+}
+
+geometry_msgs::PoseStamped SharedControl::getBlendedPose() {
+  if (!intent_inference_.isPickAssistanceActive())
+    return user_desired_gripper_pose_;
+
+  geometry_msgs::PoseStamped blended_pose;
+  blended_pose.header.frame_id = user_desired_gripper_pose_.header.frame_id;
+  blended_pose.pose.position = this->getBlendedPosition();
+  blended_pose.pose.orientation = this->getBlendedOrientation();
+  blended_pose.header.stamp = ros::Time::now();
+  return blended_pose;
+}
+
+geometry_msgs::Point SharedControl::getBlendedPosition() {
+  const geometry_msgs::Point target_position = intent_inference_.getTargetPosition();
+  const double dx = target_position.x - user_desired_gripper_pose_.pose.position.x;
+  const double dy = target_position.y - user_desired_gripper_pose_.pose.position.y;
+  const double dz = target_position.z - user_desired_gripper_pose_.pose.position.z;
+  const double distance = std::sqrt(dx*dx + dy*dy + dz*dz);
+  const double assist_offset = this->calculateAssistanceOffset(distance);
+  const double ratio = (distance > 1e-4) ? (assist_offset / distance) : 0.0;
+
+  geometry_msgs::Point blended_position = user_desired_gripper_pose_.pose.position;
+  blended_position.x += dx * ratio;
+  blended_position.y += dy * ratio;
+  blended_position.z += dz * ratio;
+  return blended_position;
+}
+
+const double SharedControl::calculateAssistanceOffset(const double& distance_to_target) {
+  const double A = 0.15;
+  const double P = 8.0;
+  const double B = 0.05;
+  return A * std::tanh(P * distance_to_target) + B;
+}
+
+geometry_msgs::Quaternion SharedControl::getBlendedOrientation() {
+  RPY user_rpy; 
+  user_rpy.convertFromQuaternion(user_desired_gripper_pose_.pose.orientation);
+
+  RPY target_rpy;
+  target_rpy.roll = M_PI / 2;
+  target_rpy.pitch = 0;
+  target_rpy.yaw = user_rpy.yaw;
+  tf2::Quaternion q_target = target_rpy.convertToTF2Quaternion();
+  tf2::Quaternion q_user;
+  tf2::fromMsg(user_desired_gripper_pose_.pose.orientation, q_user);
+
+  const double rot_gain = 0.1;
+  tf2::Quaternion q_final = q_user.slerp(q_target, rot_gain);
+  q_final.normalize();
+
+  geometry_msgs::Quaternion blended_orientation;
+  blended_orientation = tf2::toMsg(q_final);
+  return blended_orientation;
 }
 
 void SharedControl::publishIntentBeliefVisualization() {
@@ -191,40 +246,4 @@ void SharedControl::publishObjectsWithBelief() {
   detection_msgs::DetectedObjectArray objects_with_belief
       = intent_inference_.getObjectsWithBelief();
   objects_with_belief_publisher_.publish(objects_with_belief);
-}
-
-geometry_msgs::PoseStamped SharedControl::getTargetPose() {
-  static geometry_msgs::Point target_position;
-  static geometry_msgs::Quaternion target_orientation;
-  if (intent_inference_.isPickAssistanceActive()) {
-    if (is_pick_assistance_active_ == false) {
-      target_position = this->getTargetPosition();
-      target_orientation = this->getTargetOrientation();
-      is_pick_assistance_active_ = true;
-    }
-
-    geometry_msgs::PoseStamped target_pose;
-    target_pose.header.frame_id = "tm_base";
-    target_pose.header.stamp = ros::Time::now();
-    target_pose.pose.position = target_position;
-    target_pose.pose.orientation = target_orientation;
-
-    return target_pose;
-  }
-
-  is_pick_assistance_active_ = false;
-  return user_desired_gripper_pose_;
-}
-
-geometry_msgs::Point SharedControl::getTargetPosition() {
-  return intent_inference_.getTargetPosition();
-}
-
-geometry_msgs::Quaternion SharedControl::getTargetOrientation() {
-  geometry_msgs::Vector3 target_direction = intent_inference_.getTargetDirection();
-  RPY target_orientation;
-  target_orientation.roll = M_PI / 2;
-  target_orientation.pitch = 0;
-  target_orientation.yaw = M_PI / 2 + std::atan2(target_direction.y, target_direction.x);
-  return target_orientation.convertToQuaternion();
 }

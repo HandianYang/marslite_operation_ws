@@ -257,7 +257,8 @@ void IntentInference::updateBelief() {
 
     // (1) direction_likelihood
     const double direction_similarity = getCosineSimilarity(user_command_velocity_, goal_direction);
-    const double direction_likelihood = (direction_similarity + 1) / 2;  // [-1, 1] -> [0, 1]
+    const double direction_base_score = (direction_similarity + 1) / 2;  // [-1, 1] -> [0, 1]
+    const double direction_likelihood = std::pow(direction_base_score, kDirectionLikelihoodParameter);
 
     // (2) proximity likelihood
     const double goal_distance = std::sqrt(
@@ -437,8 +438,11 @@ void IntentInference::calculateConfidence() {
   std::sort(probs.begin(), probs.end(), std::greater<double>());
 
   if (probs.size() >= 2) {
-    // confidence -> highest probability - second highest probability
-    confidence_ = probs[0] - probs[1];
+    //// confidence -> highest probability - second highest probability
+    // confidence_ = probs[0] - probs[1];
+
+    // confidence -> highest probability / second highest probability
+    confidence_ = probs[0] / probs[1];
   } else if (probs.size() == 1) {
     // only one object -> full confidence
     confidence_ = 1.0;

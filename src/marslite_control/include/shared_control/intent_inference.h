@@ -64,16 +64,18 @@ class IntentInference {
  public:
   using ResetPoseHandler = std::function<bool()>;
 
+  // direction likelihood parameter
+  static inline constexpr double kDirectionLikelihoodParameter = 4.0;
   // proximity likelihood parameter
   static inline constexpr double kProximityLikelihoodParameter = 3.0;
   // confidence threshold to lock target
-  static inline constexpr double kAssistanceActivatedConfidenceThreshold = 0.3;
+  static inline constexpr double kAssistanceActivatedConfidenceThreshold = 2;
   // [m/s] speed threshold to consider "GripperMotionState::IDLE" 
   static inline constexpr double kIdleSpeedThreshold = 1e-6;
   // [m] distance from target object to planned position
   static inline constexpr double kTargetShiftDistance = 0.02;
   // [m] distance threshold to consider reaching a goal
-  static inline constexpr double kNearDistanceThreshold = 0.08;
+  static inline constexpr double kNearDistanceThreshold = 0.02;
   // [m] distance threshold to consider being in the pick area
   static inline constexpr double kPickAreaDistanceThreshold = 0.40;
   // direction similarity threshold to consider moving toward one object
@@ -81,9 +83,9 @@ class IntentInference {
   static inline constexpr double kTowardTargetDirectionSimilarityThreshold = 0.707;
   // direction similarity threshold to consider moving away from one object
   //   (cos(135 degrees) = -0.707)
-  static inline constexpr double kAwayTargetDirectionSimilarityThreshold = -0.707;
+  static inline constexpr double kAwayTargetDirectionSimilarityThreshold = 0.0;
   // [s] time to confirm locking a target
-  static inline constexpr double kAssistDwellTime = 0.5;
+  static inline constexpr double kAssistDwellTime = 0.3;
   // [s] cooldown time to transfer from RETREATED to UNLOCKED
   static inline constexpr double kRejectCooldownTime = 1.0;
   // [m] distance tolerance to determine whether two positions are the same
