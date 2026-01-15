@@ -1,7 +1,7 @@
 marslite_cartesian_motion_controller:
   type: "position_controllers/CartesianMotionController"
   end_effector_link: "robotiq_85_base_link"
-  robot_base_link: "base_link"
+  robot_base_link: "tm_base"
   target_frame_topic: "target_frame"
   joints:
   - tm_shoulder_1_joint
