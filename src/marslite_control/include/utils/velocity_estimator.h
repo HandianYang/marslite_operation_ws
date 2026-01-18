@@ -58,6 +58,7 @@ class VelocityEstimator {
   }
 
   std::deque<geometry_msgs::PointStamped> waypoint_buffer_;
+  geometry_msgs::Vector3 previous_filtered_velocity_;
   geometry_msgs::Vector3 estimated_velocity_;
   geometry_msgs::Vector3 estimated_direction_;
 };

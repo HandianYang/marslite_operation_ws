@@ -7,15 +7,31 @@ void VelocityEstimator::estimateVelocity() {
   if (waypoint_buffer_.size() < 3)
     return;
   
-  const geometry_msgs::Vector3 velocity = this->getVelocity();
-  const double speed = norm(velocity);
-  if (speed < params.min_speed)
+  const geometry_msgs::Vector3 raw_velocity = this->getVelocity();
+  const double raw_speed = norm(raw_velocity);
+  if (raw_speed < params.min_speed) {
+    estimated_velocity_ = geometry_msgs::Vector3();
+    estimated_direction_ = geometry_msgs::Vector3();
+    previous_filtered_velocity_ = geometry_msgs::Vector3();
     return;
+  }
 
-  estimated_velocity_ = velocity;
-  estimated_direction_.x = velocity.x / speed;
-  estimated_direction_.y = velocity.y / speed;
-  estimated_direction_.z = velocity.z / speed;
+  if (previous_filtered_velocity_.x == 0 && previous_filtered_velocity_.y == 0)
+    previous_filtered_velocity_ = raw_velocity;
+
+  geometry_msgs::Vector3 smooth_velocity;
+  const double alpha = 0.3; // the smaller the smoother (but more delay)
+  smooth_velocity.x = alpha * raw_velocity.x + (1.0 - alpha) * previous_filtered_velocity_.x;
+  smooth_velocity.y = alpha * raw_velocity.y + (1.0 - alpha) * previous_filtered_velocity_.y;
+  smooth_velocity.z = alpha * raw_velocity.z + (1.0 - alpha) * previous_filtered_velocity_.z;
+  estimated_velocity_ = previous_filtered_velocity_ = smooth_velocity;
+
+  const double smooth_speed = norm(smooth_velocity);
+  if (smooth_speed > 1e-6) {
+    estimated_direction_.x = smooth_velocity.x / smooth_speed;
+    estimated_direction_.y = smooth_velocity.y / smooth_speed;
+    estimated_direction_.z = smooth_velocity.z / smooth_speed;
+  }
 }
 
 geometry_msgs::Vector3 VelocityEstimator::getVelocity() const {

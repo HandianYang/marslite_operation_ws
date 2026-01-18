@@ -31,9 +31,9 @@ class MotionControllerTeleoperation {
   // tolerance for considering two orientations are the same (in terms of quaternion)
   static inline constexpr double kOrientationTolerance = 0.01;
   // buffer size for velocity estimator
-  static inline constexpr size_t kEstimatorBufferSize = 6;
+  static inline constexpr size_t kEstimatorBufferSize = 30;
   // minimum speed for velocity estimator
-  static inline constexpr double kEstimatorMinSpeed = 1e-2;
+  static inline constexpr double kEstimatorMinSpeed = 0.15;
 
   explicit MotionControllerTeleoperation(const ros::NodeHandle& nh = ros::NodeHandle());
 
@@ -94,7 +94,6 @@ class MotionControllerTeleoperation {
   void leftControllerPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
   void leftControllerJoyCallback(const sensor_msgs::Joy::ConstPtr& msg);
   void toggleGripperStatus();
-  void resetPoseSignalCallback(const std_msgs::Bool::ConstPtr& msg);
   bool resetCallback(std_srvs::Trigger::Request &req, std_srvs::Trigger::Response &res);
 
   const bool targetPoseIsReached(const geometry_msgs::PoseStamped& target_pose) const;
