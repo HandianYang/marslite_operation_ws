@@ -4,6 +4,6 @@ int main(int argc, char** argv)
 {
   ros::init(argc, argv, "shared_control_node");  
   SharedControl shared_control;
-  shared_control.run_inference();
+  shared_control.runInference();
   return 0;
 }

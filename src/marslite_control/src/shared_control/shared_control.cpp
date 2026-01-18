@@ -1,9 +1,11 @@
 #include "shared_control/shared_control.h"
 
+
 #include <visualization_msgs/MarkerArray.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <std_msgs/String.h>
+
 
 #include "detection_msgs/RobotState.h"
 
@@ -38,32 +40,33 @@ bool SharedControl::callResetPoseService() {
   }
 }
 
-void SharedControl::run_inference() {
+void SharedControl::runInference() {
   while (nh_.ok()) {
-    this->run_inference_once();
+    this->runInferenceOnce();
     loop_rate_.sleep();
     ros::spinOnce();
   }
 }
 
-void SharedControl::run_inference_once() {
-  /// TODO: Specify the function according to the task
-
-  /// Step 1. Initialization
-  intent_inference_.updateGripperPosition();
+void SharedControl::runInferenceOnce() {
+  // While `shared_control_enabled_` is false, the system will only update the
+  //  object positions to tm_base frame. Although `publishObjectsWithBelief()`
+  //  is called, the belief value will remain default (i.e., uniform distribution).
+  //
+  // The command to gripper pose will always be published, either blended or
+  //   directly from user input.
+  
   intent_inference_.updateObjectPositionToTmBase();
-  intent_inference_.updateRobotState();
-
-  /// Step 2. Update belief
-  intent_inference_.updateBelief();
-
-  /// Step 3. Publish results
+  if (shared_control_enabled_) {
+    intent_inference_.updateGripperPosition();
+    intent_inference_.updateRobotState();
+    intent_inference_.updateBelief();
+    this->publishIntentBeliefVisualization();
+    this->publishRobotState();
+  }
+  
   this->publishBlendedGripperPose();
-  // Publish for visualization
-  this->publishIntentBeliefVisualization();
-  // Publish for rosbag
   this->publishObjectsWithBelief();
-  this->publishRobotState();
 }
 
 /******************************************************
@@ -73,6 +76,7 @@ void SharedControl::run_inference_once() {
 void SharedControl::parseParameters() {
   ros::NodeHandle pnh("~");
   pnh.param("use_sim", use_sim_, false);
+  pnh.param("shared_control_enabled", shared_control_enabled_, true);
 }
 
 void SharedControl::initializePublishers() {
@@ -110,6 +114,10 @@ void SharedControl::initializeSubscribers() {
       "/marslite_control/orientation_safety_button_signal", 1,
       &SharedControl::orientationSafetyButtonSignalCallback, this
   );
+  current_gripper_pose_subscriber_ = nh_.subscribe(
+      "/marslite_control/gripper_pose", 1,
+      &SharedControl::currentGripperPoseCallback, this
+  );
   user_desired_gripper_pose_subscriber_ = nh_.subscribe(
       "/marslite_control/user_desired_gripper_pose", 1,
       &SharedControl::userDesiredGripperPoseCallback, this
@@ -128,6 +136,7 @@ void SharedControl::detectedObjectsCallback(
     const detection_msgs::DetectedObjectArray::ConstPtr& objects) {
   if (begin_recording_) {
     intent_inference_.setRecordedObjects(*objects);
+    ROS_INFO_STREAM(objects->objects.size() << " objects recorded");
     begin_recording_ = false;
   }
 }
@@ -146,6 +155,11 @@ void SharedControl::positionSafetyButtonSignalCallback(
 void SharedControl::orientationSafetyButtonSignalCallback(
     const std_msgs::Bool::ConstPtr& signal) {
   orientation_safety_button_signal_ = *signal;
+}
+
+void SharedControl::currentGripperPoseCallback(
+    const geometry_msgs::PoseStamped& pose) {
+  current_gripper_pose_ = pose;
 }
 
 void SharedControl::userDesiredGripperPoseCallback(
@@ -186,29 +200,57 @@ geometry_msgs::PoseStamped SharedControl::getBlendedPose() {
 }
 
 geometry_msgs::Point SharedControl::getBlendedPosition() {
+  /// TODO: Refine the code
+  Eigen::Vector3d p_user(
+      user_desired_gripper_pose_.pose.position.x,
+      user_desired_gripper_pose_.pose.position.y,
+      user_desired_gripper_pose_.pose.position.z
+  );
+  Eigen::Vector3d p_robot(
+      current_gripper_pose_.pose.position.x,
+      current_gripper_pose_.pose.position.y,
+      current_gripper_pose_.pose.position.z
+  );
   const geometry_msgs::Point target_position = intent_inference_.getTargetPosition();
-  const double dx = target_position.x - user_desired_gripper_pose_.pose.position.x;
-  const double dy = target_position.y - user_desired_gripper_pose_.pose.position.y;
-  const double dz = target_position.z - user_desired_gripper_pose_.pose.position.z;
-  const double distance = std::sqrt(dx*dx + dy*dy + dz*dz);
-  const double assist_offset = this->calculateAssistanceOffset(distance);
-  const double ratio = (distance > 1e-4) ? (assist_offset / distance) : 0.0;
+  Eigen::Vector3d p_target(
+      target_position.x, target_position.y, target_position.z
+  );
 
-  geometry_msgs::Point blended_position = user_desired_gripper_pose_.pose.position;
-  blended_position.x += dx * ratio;
-  blended_position.y += dy * ratio;
-  blended_position.z += dz * ratio;
+  Eigen::Vector3d user_desired_direction = p_user - p_robot;
+  Eigen::Vector3d target_direction = p_target - p_robot;
+  target_direction.z() = 0;
+  const double target_distance = target_direction.norm();
+  if (target_distance < 1e-3)
+    return user_desired_gripper_pose_.pose.position;
+  
+  Eigen::Vector3d u_r = target_direction.normalized();
+  Eigen::Vector3d u_z(0, 0, 1);
+  Eigen::Vector3d u_phi = u_z.cross(u_r);
+
+  // Projection
+  const double v_r = user_desired_direction.dot(u_r);
+  const double v_z = user_desired_direction.dot(u_z);
+  const double v_phi = user_desired_direction.dot(u_phi);
+  
+  // Gains
+  const double k_r = (v_r >= 0) ? 1.5 : 1.0; // >= 1.0 to enhance the attractive force
+  const double k_z = 1.0; // no interference
+  const double k_phi = (target_distance > 0.3) ? 0.8 : 0.2; // < 1.0 to restrict lateral movements
+
+  Eigen::Vector3d v_mod = (k_r * v_r) * u_r + 
+      (k_z * v_z) * u_z + 
+      (k_phi * v_phi) * u_phi;
+  Eigen::Vector3d p_cmd = p_robot + v_mod;
+  
+  geometry_msgs::Point blended_position;
+  blended_position.x = p_cmd.x();
+  blended_position.y = p_cmd.y();
+  blended_position.z = p_cmd.z();
   return blended_position;
 }
 
-const double SharedControl::calculateAssistanceOffset(const double& distance_to_target) {
-  const double A = 0.15;
-  const double P = 8.0;
-  const double B = 0.05;
-  return A * std::tanh(P * distance_to_target) + B;
-}
-
 geometry_msgs::Quaternion SharedControl::getBlendedOrientation() {
+  /// TODO: Modify this function
   RPY user_rpy; 
   user_rpy.convertFromQuaternion(user_desired_gripper_pose_.pose.orientation);
 

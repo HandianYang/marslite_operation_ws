@@ -1,6 +1,8 @@
 #ifndef MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROL_H
 #define MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROL_H
 
+#include <Eigen/Dense>
+
 #include <ros/ros.h>
 #include <geometry_msgs/Vector3.h>
 #include <geometry_msgs/PoseStamped.h>
@@ -19,9 +21,9 @@ class SharedControl {
 
   bool callResetPoseService();
 
-  void run_inference();
+  void runInference();
 
-  void run_inference_once();
+  void runInferenceOnce();
 
  private:
   void parseParameters();
@@ -31,6 +33,7 @@ class SharedControl {
   void recordSignalCallback(const std_msgs::Bool::ConstPtr& signal);
   void positionSafetyButtonSignalCallback(const std_msgs::Bool::ConstPtr& signal);
   void orientationSafetyButtonSignalCallback(const std_msgs::Bool::ConstPtr& signal);
+  void currentGripperPoseCallback(const geometry_msgs::PoseStamped& pose);
   void userDesiredGripperPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& user_desired_gripper_pose);
   void userDesiredGripperStatusCallback(const std_msgs::Bool::ConstPtr& user_desired_gripper_status);
   void userCommandVelocityCallback(const geometry_msgs::Vector3::ConstPtr& user_command_velocity);
@@ -38,7 +41,6 @@ class SharedControl {
   void publishBlendedGripperPose();
   geometry_msgs::PoseStamped getBlendedPose();
   geometry_msgs::Point getBlendedPosition();
-  const double calculateAssistanceOffset(const double& distance_to_target);
   geometry_msgs::Quaternion getBlendedOrientation();
 
   void publishIntentBeliefVisualization();
@@ -60,6 +62,7 @@ class SharedControl {
   ros::Subscriber record_signal_subscriber_;
   ros::Subscriber position_safety_button_signal_subscriber_;
   ros::Subscriber orientation_safety_button_signal_subscriber_;
+  ros::Subscriber current_gripper_pose_subscriber_;
   ros::Subscriber user_desired_gripper_pose_subscriber_;
   ros::Subscriber user_desired_gripper_status_subscriber_;
   ros::Subscriber user_command_velocity_subscriber_;
@@ -68,15 +71,19 @@ class SharedControl {
   IntentInference intent_inference_;
 
   // ROS messages
+  geometry_msgs::PoseStamped current_gripper_pose_;
   geometry_msgs::PoseStamped user_desired_gripper_pose_;
   std_msgs::Bool user_desired_gripper_status_;
   std_msgs::Bool position_safety_button_signal_;
   std_msgs::Bool orientation_safety_button_signal_;
   geometry_msgs::Vector3 user_command_velocity_;
 
-  // flags
-  bool use_sim_;  // true if running in simulation
-  bool begin_recording_;  // true if record_siganl is received
+  // true if running in simulation
+  bool use_sim_;  
+  // true if shared control is enabled (not affect the use of `recorded_objects`)
+  bool shared_control_enabled_;
+  // true if record_signal is received
+  bool begin_recording_;
 };
 
 #endif // #ifndef MARSLITE_CONTROL_SHARED_CONTROL_SHARED_CONTROL_H

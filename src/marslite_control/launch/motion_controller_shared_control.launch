@@ -10,7 +10,9 @@
     <arg name="use_sim" value="$(arg use_sim)"/>
   </include>
 
+  <arg name="shared_control_enabled" default="true"/>
   <node name="shared_control_node" pkg="marslite_control" type="shared_control_node" output="screen">
     <param name="use_sim" value="$(arg use_sim)"/>
+    <param name="shared_control_enabled" value="$(arg shared_control_enabled)"/>
   </node>
 </launch>

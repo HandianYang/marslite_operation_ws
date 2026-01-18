@@ -317,22 +317,23 @@ void IntentInference::removeTargetFromRecordedObjects() {
 const bool IntentInference::isNearTarget() const {
   const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
   if (target_direction == geometry_msgs::Vector3())  return false;
-  const double target_distance = std::sqrt(
+  const double target_distance_xy = std::sqrt(
       target_direction.x * target_direction.x +
-      target_direction.y * target_direction.y +
-      target_direction.z * target_direction.z
+      target_direction.y * target_direction.y
+      // Ignore z direction, and let user decide the height
   );
-  return target_distance < kNearDistanceThreshold;
+  return target_distance_xy < kNearDistanceThreshold && target_direction.z < kZDistanceThreshold;
 }
 
 const bool IntentInference::isTargetReached() const {
-  const geometry_msgs::Point target_position = this->getTargetPosition();
-  const double distance = std::sqrt(
-      (target_position.x - gripper_position_.x) * (target_position.x - gripper_position_.x) +
-      (target_position.y - gripper_position_.y) * (target_position.y - gripper_position_.y) +
-      (target_position.z - gripper_position_.z) * (target_position.z - gripper_position_.z)
+  const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
+  if (target_direction == geometry_msgs::Vector3())  return false;
+  const double target_distance_xy = std::sqrt(
+      target_direction.x * target_direction.x +
+      target_direction.y * target_direction.y
+      // Ignore z direction, and let user decide the height
   );
-  return distance < kPositionTolerance;
+  return target_distance_xy < kPositionTolerance && target_direction.z < kZDistanceThreshold;
 }
 
 const bool IntentInference::isInPickArea() const {
@@ -351,18 +352,15 @@ const bool IntentInference::isInPickArea() const {
 
 const bool IntentInference::isTowardTarget() const {
   const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
-  const double mag = std::sqrt(
-      target_direction.x * target_direction.x +
-      target_direction.y * target_direction.y +
-      target_direction.z * target_direction.z
-  );
-  if (mag < 1e-6)  return false;  // avoid divide-by-zero
+  const double target_distance = norm(target_direction);
+  if (target_distance < kDirectionTolerance)  return false;  // avoid divide-by-zero
   
   const double direction_similarity = this->getCosineSimilarity(
       user_command_velocity_,
       target_direction
   );
-  return direction_similarity > kTowardTargetDirectionSimilarityThreshold;
+  
+  return direction_similarity >= kTowardTargetDirectionSimilarityThreshold;
 }
 
 void IntentInference::triggerAssistDwellTimer() {
@@ -376,12 +374,11 @@ const bool IntentInference::isAssistDwellTimePassed() {
 
 const bool IntentInference::isAwayFromTarget() const {
   const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
-  const double mag = std::sqrt(
-      target_direction.x * target_direction.x +
-      target_direction.y * target_direction.y +
-      target_direction.z * target_direction.z
-  );
-  if (mag < 1e-6)  return false;  // avoid divide-by-zero
+  const double target_distance = norm(target_direction);
+  if (target_distance < kDirectionTolerance)  return false;  // avoid divide-by-zero
+
+  const double user_command_speed = norm(user_command_velocity_);
+  if (user_command_speed < kUserCommandSpeedTolerance)  return false; // ignore little speed
 
   const double direction_similarity = this->getCosineSimilarity(
       user_command_velocity_,
@@ -438,14 +435,11 @@ void IntentInference::calculateConfidence() {
   std::sort(probs.begin(), probs.end(), std::greater<double>());
 
   if (probs.size() >= 2) {
-    //// confidence -> highest probability - second highest probability
-    // confidence_ = probs[0] - probs[1];
-
     // confidence -> highest probability / second highest probability
     confidence_ = probs[0] / probs[1];
   } else if (probs.size() == 1) {
     // only one object -> full confidence
-    confidence_ = 1.0;
+    confidence_ = DBL_MAX;
   } else {
     // no objects -> no confidence
     confidence_ = 0.0;
