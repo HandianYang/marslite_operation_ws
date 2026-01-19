@@ -201,51 +201,55 @@ geometry_msgs::PoseStamped SharedControl::getBlendedPose() {
 
 geometry_msgs::Point SharedControl::getBlendedPosition() {
   /// TODO: Refine the code
-  Eigen::Vector3d p_user(
+  const Eigen::Vector3d user_command_position(
       user_desired_gripper_pose_.pose.position.x,
       user_desired_gripper_pose_.pose.position.y,
       user_desired_gripper_pose_.pose.position.z
   );
-  Eigen::Vector3d p_robot(
+  const Eigen::Vector3d gripper_position(
       current_gripper_pose_.pose.position.x,
       current_gripper_pose_.pose.position.y,
       current_gripper_pose_.pose.position.z
   );
-  const geometry_msgs::Point target_position = intent_inference_.getTargetPosition();
-  Eigen::Vector3d p_target(
-      target_position.x, target_position.y, target_position.z
-  );
+  const geometry_msgs::Point tp = intent_inference_.getTargetPosition();
+  const Eigen::Vector3d target_position(tp.x, tp.y, tp.z);
 
-  Eigen::Vector3d user_desired_direction = p_user - p_robot;
-  Eigen::Vector3d target_direction = p_target - p_robot;
-  target_direction.z() = 0;
+  const Eigen::Vector3d user_desired_direction = user_command_position - gripper_position;
+  Eigen::Vector3d target_direction = target_position - gripper_position;
+  target_direction.z() = 0; // to make `u_r` and `u_phi` always parallel to the ground
   const double target_distance = target_direction.norm();
-  if (target_distance < 1e-3)
+  if (target_distance < kDistanceTolerance)
     return user_desired_gripper_pose_.pose.position;
   
+  /// 3 axes in unit vector
   Eigen::Vector3d u_r = target_direction.normalized();
   Eigen::Vector3d u_z(0, 0, 1);
   Eigen::Vector3d u_phi = u_z.cross(u_r);
 
-  // Projection
+  /// user command's projection to 3 axes 
   const double v_r = user_desired_direction.dot(u_r);
   const double v_z = user_desired_direction.dot(u_z);
   const double v_phi = user_desired_direction.dot(u_phi);
   
-  // Gains
-  const double k_r = (v_r >= 0) ? 1.5 : 1.0; // >= 1.0 to enhance the attractive force
-  const double k_z = 1.0; // no interference
-  const double k_phi = (target_distance > 0.3) ? 0.8 : 0.2; // < 1.0 to restrict lateral movements
+  /// gains
+  // Set k_r >= 1.0 to enhance the attractive force, and set it to 1.0 
+  //  for retreat movements (no interference)
+  const double k_r = (v_r >= 0) ? kAttractiveForceGain : 1.0;
+  // No interference (a.k.a. let user decide)
+  const double k_z = 1.0;
+  // Set k_phi < 1.0 to restrict lateral movements
+  const double k_phi = (target_distance > kRepulsiveForceJunctionDistance) ?
+      kRepulsiveForceWeakGain : kRepulsiveForceStrongGain;
 
-  Eigen::Vector3d v_mod = (k_r * v_r) * u_r + 
+  const Eigen::Vector3d blended_displacement = (k_r * v_r) * u_r + 
       (k_z * v_z) * u_z + 
       (k_phi * v_phi) * u_phi;
-  Eigen::Vector3d p_cmd = p_robot + v_mod;
+  const Eigen::Vector3d blended_gripper_position = gripper_position + blended_displacement;
   
   geometry_msgs::Point blended_position;
-  blended_position.x = p_cmd.x();
-  blended_position.y = p_cmd.y();
-  blended_position.z = p_cmd.z();
+  blended_position.x = blended_gripper_position.x();
+  blended_position.y = blended_gripper_position.y();
+  blended_position.z = blended_gripper_position.z();
   return blended_position;
 }
 

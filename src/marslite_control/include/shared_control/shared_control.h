@@ -17,6 +17,16 @@
 
 class SharedControl {
  public:
+  static inline constexpr double kDistanceTolerance = 1e-3;
+  // normally >= 1.0 to enhance attractive force
+  static inline constexpr double kAttractiveForceGain = 1.8;
+  // "weak" means weak repulsive force (less restriction)
+  static inline constexpr double kRepulsiveForceWeakGain = 0.8;
+  // "strong" means strong repulsive force (more restriction)
+  static inline constexpr double kRepulsiveForceStrongGain = 0.2;
+  // [m] junction between "strong" gain and "weak" gain
+  static inline constexpr double kRepulsiveForceJunctionDistance = 0.3;
+
   explicit SharedControl(const ros::NodeHandle& nh = ros::NodeHandle());
 
   bool callResetPoseService();
