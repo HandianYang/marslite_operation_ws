@@ -7,7 +7,7 @@ This ROS workspace provides robot operations for MARS-lite robots, such as navig
 ### Hardware (PC)
 - CUDA 12.1-capable GPU
 
-### Software
+### Software (Host machine)
 - Ubuntu Host: 16.04 LTS ~ 24.04 LTS
 - NVIDIA Driver: 525.60+
 - NVIDIA Container Toolkit: latest
@@ -21,13 +21,13 @@ The environment for this workspace was built using Docker.
 
 #### Enter Docker container
 
-Create a Docker container named `marslite-operation` based on Docker image `handianyang/marslite-operation:ros1-noetic`, and enter this container:
+To create a Docker container named `marslite-operation` based on the latest version of Docker image `handianyang/marslite-operation:ros1-noetic`, and then enter this container:
 
 ```bash
 source docker_run.sh
 ```
 
-If the container with name `marslite-operation` already exists, it will be reopened.
+If the container with name `marslite-operation` already exists, it will be **reopened**.
 
 Aditionally, you can find more details (installed package list, tag list, etc.) on [Docker Hub](https://hub.docker.com/repository/docker/handianyang/marslite-operation/general).
 
@@ -40,14 +40,14 @@ docker rm marslite-operation
 
 ### MARS-lite robot bringup
 
-#### Normal bringup
+#### Bringup with Moveit! controller
 
 ```bash
 # on MARS-lite
-
+roslaunch mars_lite_bringup mars_lite_bringup.launch
 ```
 
-#### Bringup with cartesian controllers
+#### Bringup with cartesian controller
 
 ```bash
 # on MARS-lite
@@ -94,28 +94,32 @@ roslaunch marslite_simulation gazebo_supermarket.launch use_cartesian_controller
 
 ### Robotic arm control
 
-#### Launch Moveit! control interface
+- Launch Moveit! control interface
+  - Status
+    - simulation: stable
+    - real robot: **not tested**
 
 ```bash
 roslaunch marslite_simulation moveit_planning_gz.launch
 ```
 
-<!-- 1. Launch a **Gazebo world of supermarket environment** with Marslite robot:
-    ```bash
-    roslaunch mars_lite_description gazebo_supermarket.launch
-    ```
+- Launch motion controller teleoperation module using Cartesian controller
+  - Status
+    - simulation: stable
+    - real robot: stable
 
-    (Optional) Launch with D435 camera
-    ```bash
-    roslaunch mars_lite_description gazebo_supermarket.launch realsense_enabled:=true
-    ```
+```bash
+roslaunch marslite_control motion_controller_teleoperation.launch
+```
 
-2. Spawn a Marslite robot in an **existing Gazebo world**:
-    ```bash
-    roslaunch mars_lite_description spawn_mars.launch
-    ```
-    **[NOTE] This SHALL NOT be launched with `gazebo_supermarket.launch`.** -->
+- Launch `motion_controller_teleoperation.launch` with shared controller module 
+  - Status
+    - simulation: **not tested**
+    - real robot: stable
 
+```bash
+roslaunch marslite_control motion_controller_teleoperation.launch
+```
 
 ### Navigation
 
@@ -136,3 +140,7 @@ roslaunch marslite_navigation navigation.launch
 ```bash
 roslaunch marslite_navigation teleop_keyboard.launch
 ```
+
+## Known Issues
+
+- `marslite_control/motion_controller_teleoperation` calculates cylindrical pose wrong
