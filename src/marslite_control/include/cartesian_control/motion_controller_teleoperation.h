@@ -194,10 +194,14 @@ class MotionControllerTeleoperation {
   bool is_shoulder_position_calibrated_;  // true if the initial shoulder point is calibrated
 
   // parameters
-  double position_scale_;
-  double orientation_scale_;
-  double linear_platform_velocity_scale_;
-  double angular_platform_velocity_scale_;
+  double platform_linear_scale_;
+  double platform_angular_scale_;
+  double gripper_position_radius_scale_;
+  double gripper_position_yaw_scale_;
+  double gripper_position_height_scale_;
+  double gripper_orientation_roll_scale_;
+  double gripper_orientation_pitch_scale_;
+  double gripper_orientation_yaw_scale_;
 
   // [radian] angle difference between first joint yaw angle and control view direction
   double control_view_offset_;

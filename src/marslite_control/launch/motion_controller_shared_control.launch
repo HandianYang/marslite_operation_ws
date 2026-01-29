@@ -1,13 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <arg name="position_scale" default="1.0"/>
-  <arg name="orientation_scale" default="0.8"/>
   <arg name="use_sim" default="false"/>
   <include file="$(find marslite_control)/launch/motion_controller_teleoperation.launch">
-    <arg name="position_scale" value="$(arg position_scale)"/>
-    <arg name="orientation_scale" value="$(arg orientation_scale)"/>
-    <arg name="use_shared_controller" value="true"/>
     <arg name="use_sim" value="$(arg use_sim)"/>
+    <arg name="use_shared_controller" value="true"/>
   </include>
 
   <arg name="shared_control_enabled" default="true"/>

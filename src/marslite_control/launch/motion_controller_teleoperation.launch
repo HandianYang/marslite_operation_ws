@@ -2,19 +2,13 @@
 <launch>
   <include file="$(find rosbridge_server)/launch/rosbridge_websocket.launch"/>
 
-  <arg name="position_scale" default="0.8"/>
-  <arg name="orientation_scale" default="0.8"/>
-  <arg name="linear_platform_velocity_scale" default="0.15"/>
-  <arg name="angular_platform_velocity_scale" default="0.15"/>
-  <arg name="use_shared_controller" default="false"/>
   <arg name="use_sim" default="false"/>
+  <arg name="use_shared_controller" default="false"/>
+
+  <rosparam file="$(find marslite_control)/config/motion_controller_teleoperation.yaml" command="load"/>
   <node name="motion_controller_teleoperation_node" pkg="marslite_control"
         type="motion_controller_teleoperation_node" output="screen">
-    <param name="position_scale" value="$(arg position_scale)"/>
-    <param name="orientation_scale" value="$(arg orientation_scale)"/>
-    <param name="linear_platform_velocity_scale" value="$(arg linear_platform_velocity_scale)"/>
-    <param name="angular_platform_velocity_scale" value="$(arg angular_platform_velocity_scale)"/>
-    <param name="use_shared_controller" value="$(arg use_shared_controller)"/>
     <param name="use_sim" value="$(arg use_sim)"/>
+    <param name="use_shared_controller" value="$(arg use_shared_controller)"/>
   </node>
 </launch>

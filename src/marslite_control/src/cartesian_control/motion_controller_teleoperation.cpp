@@ -133,27 +133,35 @@ void MotionControllerTeleoperation::run() {
  ****************************************************** */
 
 void MotionControllerTeleoperation::parseParameters() {
-  ros::NodeHandle pnh("~");
-  pnh.param("position_scale", position_scale_, 0.8);
-  pnh.param("orientation_scale", orientation_scale_, 0.8);
-  pnh.param("linear_platform_velocity_scale", linear_platform_velocity_scale_, 0.15);
-  pnh.param("angular_platform_velocity_scale", angular_platform_velocity_scale_, 0.15);
-  pnh.param("use_shared_controller", use_shared_controller_, false);
-  pnh.param("use_sim", use_sim_, false);
-
   // TF yaw offset from control view direction
   // [Note] TF is defined as: /tm_base -> /tm_gripper
   // [Note] Actual_yaw = control_view_angle_ + control_view_offset_
   control_view_offset_ = use_sim_ ? 0.0 : M_PI / 2;
 
+  ros::NodeHandle pnh("~");
+  pnh.param("use_sim", use_sim_, false);
+  pnh.param("use_shared_controller", use_shared_controller_, false);
+
+  nh_.getParam("mobile_platform/linear_scale", platform_linear_scale_);
+  nh_.getParam("mobile_platform/angular_scale", platform_angular_scale_);
+  nh_.getParam("robotic_arm/position/radius_scale", gripper_position_radius_scale_);
+  nh_.getParam("robotic_arm/position/yaw_scale", gripper_position_yaw_scale_);
+  nh_.getParam("robotic_arm/position/height_scale", gripper_position_height_scale_);
+  nh_.getParam("robotic_arm/orientation/roll_scale", gripper_orientation_roll_scale_);
+  nh_.getParam("robotic_arm/orientation/pitch_scale", gripper_orientation_pitch_scale_);
+  nh_.getParam("robotic_arm/orientation/yaw_scale", gripper_orientation_yaw_scale_);
+  
   ROS_INFO_STREAM(std::boolalpha << "Parameters: " 
-      << "\n * control_view_offset: " << control_view_offset_
-      << "\n * position_scale: " << position_scale_
-      << "\n * orientation_scale: " << orientation_scale_
-      << "\n * linear_platform_velocity_scale: " << linear_platform_velocity_scale_
-      << "\n * angular_platform_velocity_scale: " << angular_platform_velocity_scale_
-      << "\n * use_shared_controller: " << use_shared_controller_
       << "\n * use_sim: " << use_sim_
+      << "\n * use_shared_controller: " << use_shared_controller_
+      << "\n * platform_linear_scale: " << platform_linear_scale_
+      << "\n * platform_angular_scale: " << platform_angular_scale_
+      << "\n * gripper_position_radius_scale: " << gripper_position_radius_scale_
+      << "\n * gripper_position_yaw_scale: " << gripper_position_yaw_scale_
+      << "\n * gripper_position_height_scale: " << gripper_position_height_scale_
+      << "\n * gripper_orientation_roll_scale: " << gripper_orientation_roll_scale_
+      << "\n * gripper_orientation_pitch_scale: " << gripper_orientation_pitch_scale_
+      << "\n * gripper_orientation_yaw_scale: " << gripper_orientation_yaw_scale_
   );
 }
 
@@ -254,12 +262,12 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
       // [1] vertical axis: Move forward/backward
       // [Note] input: forward+ / backward-
       mobile_platform_velocity_.linear.x = std::abs(msg->axes[1]) > kAnalogJoystickDeadzone ?
-          msg->axes[1] * linear_platform_velocity_scale_ : 0.0;
+          msg->axes[1] * platform_linear_scale_ : 0.0;
     case 1:
       // [0] horizontal axis: Turn left/right
       // [Note] input: left- / right+
       mobile_platform_velocity_.angular.z = std::abs(msg->axes[0]) > kAnalogJoystickDeadzone ?
-          - msg->axes[0] * angular_platform_velocity_scale_ : 0.0;
+          - msg->axes[0] * platform_angular_scale_ : 0.0;
       break;
     default:
       ROS_WARN_ONCE("Mismatch number of left joystick axes (%lu).", msg->axes.size());
@@ -419,9 +427,9 @@ CylindricalPoint MotionControllerTeleoperation::getCylindricalPositionDifference
 CylindricalPoint MotionControllerTeleoperation::scaleCylindricalPositionDifference(
     const CylindricalPoint& position_difference) {
   CylindricalPoint scaled_point_difference;
-  scaled_point_difference.radius = position_difference.radius * position_scale_;
-  scaled_point_difference.yaw = position_difference.yaw * orientation_scale_;
-  scaled_point_difference.height = position_difference.height * position_scale_;
+  scaled_point_difference.radius = position_difference.radius * gripper_position_radius_scale_;
+  scaled_point_difference.yaw = position_difference.yaw * gripper_position_yaw_scale_;
+  scaled_point_difference.height = position_difference.height * gripper_position_height_scale_;
   return scaled_point_difference;
 }
 
@@ -509,11 +517,10 @@ RPY MotionControllerTeleoperation::getOrientationDifference() {
 }
 
 RPY MotionControllerTeleoperation::scaleOrientationDifference(const RPY& orientation_difference) {
-  /// Roll rotation is disabled
   RPY scaled_orientation_difference;
-  scaled_orientation_difference.roll = orientation_difference.roll * orientation_scale_;
-  scaled_orientation_difference.pitch = orientation_difference.pitch * orientation_scale_;
-  scaled_orientation_difference.yaw = orientation_difference.yaw * orientation_scale_;
+  scaled_orientation_difference.roll = orientation_difference.roll * gripper_orientation_roll_scale_;
+  scaled_orientation_difference.pitch = orientation_difference.pitch * gripper_orientation_pitch_scale_;
+  scaled_orientation_difference.yaw = orientation_difference.yaw * gripper_orientation_yaw_scale_;
   return scaled_orientation_difference;
 }
 

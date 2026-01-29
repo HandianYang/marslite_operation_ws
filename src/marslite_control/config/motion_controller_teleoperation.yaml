@@ -1,0 +1,15 @@
+mobile_platform:
+  linear_scale: 0.15
+  angular_scale: 0.15
+
+robotic_arm:
+  # w.r.t. base
+  position:
+    radius_scale: 0.8
+    yaw_scale: 0.8
+    height_scale: 0.8
+  # w.r.t. gripper 
+  orientation:
+    roll_scale: 0   # roll rotation is disabled
+    pitch_scale: 0.5
+    yaw_scale: 0.8
