@@ -13,11 +13,15 @@
 #include <std_srvs/Trigger.h>
 #include <visualization_msgs/Marker.h>
 
-#include "utils/hybrid_pose.h"
 #include "utils/rpy.h"
 #include "utils/tf2_listener_wrapper.h"
 #include "utils/velocity_estimator.h"
 
+struct CylindricalPoint {
+  double radius = 0.0;
+  double yaw = 0.0;
+  double height = 0.0;
+};
 
 class MotionControllerTeleoperation {
  public:
@@ -106,24 +110,21 @@ class MotionControllerTeleoperation {
   }
   
   void calculateDesiredGripperPose();
-  void calculateDesiredGripperOrientation();
-  RPY getOrientationDifference();
-  RPY scaleOrientationDifference(const RPY& orientation_difference);
-  void applyOrientationDifference(const RPY& scaled_orientation_difference);
   void calculateDesiredGripperPosition();
   CylindricalPoint getCylindricalPositionDifference();
   CylindricalPoint scaleCylindricalPositionDifference(const CylindricalPoint& position_difference);
   void applyCylindricalPositionDifference(const CylindricalPoint& scaled_position_difference);
+  void calculateDesiredGripperOrientation();
+  RPY getOrientationDifference();
+  RPY scaleOrientationDifference(const RPY& orientation_difference);
+  void applyOrientationDifference(const RPY& scaled_orientation_difference);
   void updateGripperVelocity();
   void calculateGripperVelocityMarker();
   void calculateUserCommandVelocity();
   void calculateUserCommandVelocityMarker();
 
   inline void publishDesiredGripperPose() {
-    geometry_msgs::PoseStamped desired_pose;
-    desired_pose.header = desired_gripper_hybrid_pose_.header;
-    desired_pose.pose = desired_gripper_hybrid_pose_.toCartesianPose();
-    desired_gripper_pose_publisher_.publish(desired_pose);
+    desired_gripper_pose_publisher_.publish(desired_gripper_pose_);
   }
 
   inline void publisherGripperVelocity() {
@@ -197,17 +198,14 @@ class MotionControllerTeleoperation {
   double orientation_scale_;
   double linear_platform_velocity_scale_;
   double angular_platform_velocity_scale_;
-  double initial_lateral_offset_;
-  double accumulated_radius_difference_;
 
   // [radian] angle difference between first joint yaw angle and control view direction
   double control_view_offset_;
-  HybridPose initial_gripper_hybrid_pose_;
-  HybridPose current_gripper_hybrid_pose_;
-  HybridPose desired_gripper_hybrid_pose_;
-  HybridPose initial_left_controller_hybrid_pose_;
-  HybridPose current_left_controller_hybrid_pose_;
-  HybridPose previous_left_controller_hybrid_pose_; // last frame of current_left_controller_hybrid_pose_
+  geometry_msgs::PoseStamped initial_gripper_pose_;
+  geometry_msgs::PoseStamped current_gripper_pose_;
+  geometry_msgs::PoseStamped desired_gripper_pose_;
+  geometry_msgs::PoseStamped initial_left_controller_pose_;
+  geometry_msgs::PoseStamped current_left_controller_pose_;
 
   std::mutex desired_gripper_pose_mutex_;  // protect desired_gripper_pose_
   VelocityEstimator user_command_velocity_estimator_;

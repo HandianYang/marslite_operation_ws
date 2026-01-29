@@ -8,7 +8,7 @@
  ****************************************************** */
 
 MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHandle& nh)
-    : nh_(nh), loop_rate_(50), initial_lateral_offset_(0.0),
+    : nh_(nh), loop_rate_(50), 
       is_position_change_enabled_(false),
       is_orientation_change_enabled_(false),
       is_shoulder_position_calibrated_(false) {
@@ -210,13 +210,13 @@ void MotionControllerTeleoperation::initializeSubscribers() {
 }
 
 void MotionControllerTeleoperation::initializeHeadersForMessages() {
-  initial_left_controller_hybrid_pose_.header.frame_id = "vr_origin";
-  current_left_controller_hybrid_pose_.header.frame_id = "vr_origin";
+  initial_left_controller_pose_.header.frame_id = "vr_origin";
+  current_left_controller_pose_.header.frame_id = "vr_origin";
   shoulder_position_.header.frame_id = "vr_origin";
 
-  initial_gripper_hybrid_pose_.header.frame_id = "tm_base";
-  current_gripper_hybrid_pose_.header.frame_id = "tm_base";
-  desired_gripper_hybrid_pose_.header.frame_id = "tm_base";
+  initial_gripper_pose_.header.frame_id = "tm_base";
+  current_gripper_pose_.header.frame_id = "tm_base";
+  desired_gripper_pose_.header.frame_id = "tm_base";
   user_command_velocity_marker_.header.frame_id = "tm_base";
   gripper_velocity_marker_.header.frame_id = "tm_base";
 }
@@ -233,8 +233,8 @@ void MotionControllerTeleoperation::initializeVelocityEstimators() {
 void MotionControllerTeleoperation::leftControllerPoseCallback(
     const geometry_msgs::PoseStamped::ConstPtr& msg) {
   if (is_shoulder_position_calibrated_) {
-    current_left_controller_hybrid_pose_.updateFromCartesianPose(*msg, control_view_offset_);
-    current_left_controller_hybrid_pose_.header.stamp = ros::Time::now();
+    current_left_controller_pose_ = *msg;
+    current_left_controller_pose_.header.stamp = ros::Time::now();
   }
 }
 
@@ -282,7 +282,7 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
     case 1:
       // [0] X button: Calibrate the shoulder point
       if (msg->buttons[0] == 1) {
-        shoulder_position_.point = current_left_controller_hybrid_pose_.cartesian_position;
+        shoulder_position_.point = current_left_controller_pose_.pose.position;
         is_shoulder_position_calibrated_ = true;
         ROS_INFO_STREAM("Complete calibration of the shoulder point at: ("
             << shoulder_position_.point.x << ", "
@@ -328,16 +328,16 @@ bool MotionControllerTeleoperation::resetCallback(std_srvs::Trigger::Request &re
 
 const bool MotionControllerTeleoperation::targetPoseIsReached(
     const geometry_msgs::PoseStamped& target_pose) const {
-  const double dx = current_gripper_hybrid_pose_.cartesian_position.x - target_pose.pose.position.x;
-  const double dy = current_gripper_hybrid_pose_.cartesian_position.y - target_pose.pose.position.y;
-  const double dz = current_gripper_hybrid_pose_.cartesian_position.z - target_pose.pose.position.z;
+  const double dx = current_gripper_pose_.pose.position.x - target_pose.pose.position.x;
+  const double dy = current_gripper_pose_.pose.position.y - target_pose.pose.position.y;
+  const double dz = current_gripper_pose_.pose.position.z - target_pose.pose.position.z;
   const double position_error = sqrt(dx*dx + dy*dy + dz*dz);
   if (position_error > kPositionTolerance)  return false;
 
   auto toEig = [](const geometry_msgs::Quaternion& q){
     return Eigen::Quaterniond(q.w, q.x, q.y, q.z);
   };
-  Eigen::Quaterniond q1 = toEig(current_gripper_hybrid_pose_.orientation);
+  Eigen::Quaterniond q1 = toEig(current_gripper_pose_.pose.orientation);
   Eigen::Quaterniond q2 = toEig(target_pose.pose.orientation);
   const double n1 = q1.norm(), n2 = q2.norm();
   if (n1 < 1e-12 || n2 < 1e-12) return false;
@@ -354,148 +354,39 @@ const bool MotionControllerTeleoperation::targetPoseIsReached(
 }
 
 void MotionControllerTeleoperation::initializeGripperPose() {
-  initial_gripper_hybrid_pose_ = desired_gripper_hybrid_pose_
-                               = current_gripper_hybrid_pose_;
-  
-  // Update lateral offset
-  const double control_view_angle = current_gripper_hybrid_pose_.cylindrical_position.yaw - control_view_offset_;
-  initial_lateral_offset_ = 
-      - current_gripper_hybrid_pose_.cartesian_position.x * std::sin(control_view_angle) +
-      current_gripper_hybrid_pose_.cartesian_position.y * std::cos(control_view_angle);
+  initial_gripper_pose_ = desired_gripper_pose_ = current_gripper_pose_;
 }
 
 void MotionControllerTeleoperation::initializeLeftControllerPose() {
-  initial_left_controller_hybrid_pose_ = current_left_controller_hybrid_pose_;
-  previous_left_controller_hybrid_pose_ = current_left_controller_hybrid_pose_;
-  accumulated_radius_difference_ = 0.0;
+  initial_left_controller_pose_ = current_left_controller_pose_;
 }
 
 void MotionControllerTeleoperation::updateGripperPose() {
   const std::string source_frame = use_sim_ ? "robotiq_85_base_link" : "tm_gripper";
-  current_gripper_hybrid_pose_.updateFromCartesianPose(
-      tf2_listener_.lookupTransform<geometry_msgs::PoseStamped>(
-          "tm_base", source_frame
-      ),
-      control_view_offset_
+  const std::string target_frame = "tm_base";
+  current_gripper_pose_ = tf2_listener_.lookupTransform<geometry_msgs::PoseStamped>(
+      target_frame, source_frame
   );
-
-  geometry_msgs::PoseStamped current_gripper_pose_msg
-      = current_gripper_hybrid_pose_.toCartesianPoseStamped();
-  current_gripper_pose_publisher_.publish(current_gripper_pose_msg);
+  current_gripper_pose_publisher_.publish(current_gripper_pose_);
 }
 
 void MotionControllerTeleoperation::updateGripperVelocity() {
   geometry_msgs::PointStamped waypoint;
-  waypoint.header = current_gripper_hybrid_pose_.header;
-  waypoint.point = current_gripper_hybrid_pose_.cartesian_position;
+  waypoint.header = current_gripper_pose_.header;
+  waypoint.point = current_gripper_pose_.pose.position;
   gripper_velocity_estimator_.addWaypoint(waypoint);
   gripper_velocity_estimator_.estimateVelocity();
   gripper_velocity_ = gripper_velocity_estimator_.getEstimatedVelocity();
 }
 
 void MotionControllerTeleoperation::calculateDesiredGripperPose() {
-  desired_gripper_hybrid_pose_.header.stamp = ros::Time::now();
-  if (is_orientation_change_enabled_) {
-    this->calculateDesiredGripperOrientation();
-  }
-
+  desired_gripper_pose_.header.stamp = ros::Time::now();
   if (is_position_change_enabled_) {
     this->calculateDesiredGripperPosition();
   }
-}
-
-void MotionControllerTeleoperation::calculateDesiredGripperOrientation() {
-  const RPY orientation_difference = this->getOrientationDifference();
-  const RPY scaled_orientation_difference = this->scaleOrientationDifference(orientation_difference);
-  this->applyOrientationDifference(scaled_orientation_difference);
-}
-
-RPY MotionControllerTeleoperation::getOrientationDifference() {
-  RPY initial_left_controller_rpy;
-  initial_left_controller_rpy.convertFromPoseStamped(
-      initial_left_controller_hybrid_pose_.toCartesianPoseStamped()
-  );
-  RPY current_left_controller_rpy;
-  current_left_controller_rpy.convertFromPoseStamped(
-      current_left_controller_hybrid_pose_.toCartesianPoseStamped()
-  );
-
-  RPY orientation_difference = {
-      this->restrictAngleWithinPI(current_left_controller_rpy.roll - initial_left_controller_rpy.roll),
-      this->restrictAngleWithinPI(current_left_controller_rpy.pitch - initial_left_controller_rpy.pitch),
-      this->restrictAngleWithinPI(current_left_controller_rpy.yaw - initial_left_controller_rpy.yaw)
-  };
-  return orientation_difference;
-}
-
-RPY MotionControllerTeleoperation::scaleOrientationDifference(const RPY& orientation_difference) {
-  RPY scaled_orientation_difference;
-  scaled_orientation_difference.roll = orientation_difference.roll * orientation_scale_;
-  scaled_orientation_difference.pitch = orientation_difference.pitch * orientation_scale_;
-  scaled_orientation_difference.yaw = orientation_difference.yaw * orientation_scale_;
-  return scaled_orientation_difference;
-}
-
-void MotionControllerTeleoperation::applyOrientationDifference(const RPY& scaled_orientation_difference) {
-  Eigen::Vector3d initial_gripper_position(
-      initial_gripper_hybrid_pose_.cartesian_position.x, 
-      initial_gripper_hybrid_pose_.cartesian_position.y, 
-      initial_gripper_hybrid_pose_.cartesian_position.z
-  );
-  Eigen::Quaterniond initial_gripper_quaternion(
-      initial_gripper_hybrid_pose_.orientation.w,
-      initial_gripper_hybrid_pose_.orientation.x, 
-      initial_gripper_hybrid_pose_.orientation.y, 
-      initial_gripper_hybrid_pose_.orientation.z
-  );
-  Eigen::Matrix3d initial_gripper_rotation_matrix =
-      initial_gripper_quaternion.toRotationMatrix();
-
-  const geometry_msgs::TransformStamped T_gripper_wrist =
-      tf2_listener_.lookupTransform<geometry_msgs::TransformStamped>(
-          "tm_wrist_2_link", "tm_gripper"
-      );
-  const Eigen::Vector3d p_gripper_wrist(
-      T_gripper_wrist.transform.translation.x,
-      T_gripper_wrist.transform.translation.y,
-      T_gripper_wrist.transform.translation.z
-  );
-  const Eigen::Vector3d wrist_position = initial_gripper_position -
-      (initial_gripper_rotation_matrix * p_gripper_wrist);
-  
-  // [NOTE] The transformation from left controller to `/tm_gripper` to
-  //   `/tm_base` is applied in this function:
-  //   | controller | /tm_base    |
-  //   |------------|-------------|
-  //   |   +-roll   |   +-pitch   |
-  //   |   +-pitch  |   -+roll    |
-  //   |   +-yaw    |   +-yaw     |
-  RPY transformed_orientation_difference;
-  transformed_orientation_difference.roll = scaled_orientation_difference.pitch;
-  transformed_orientation_difference.pitch = 0.0;
-  // [NOTE] The pitch of the transformed RPY is disabled because we don't need
-  //   roll rotation for the gripper (w.r.t. `tm_base`)`
-  // 
-  //   Uncomment this line to enable pitch change:
-  // transformed_orientation_difference.pitch = -scaled_orientation_difference.roll;
-  transformed_orientation_difference.yaw = scaled_orientation_difference.yaw;
-
-  Eigen::AngleAxisd yaw_rotation(transformed_orientation_difference.yaw, Eigen::Vector3d::UnitZ());  // global
-  Eigen::AngleAxisd pitch_rotation(transformed_orientation_difference.pitch, Eigen::Vector3d::UnitZ());  // local
-  Eigen::AngleAxisd roll_rotation(transformed_orientation_difference.roll, Eigen::Vector3d::UnitX());  // local
-  // = global_rotation * initial_quat * local_rotation
-  Eigen::Quaterniond desired_gripper_quaternion = yaw_rotation * initial_gripper_quaternion * pitch_rotation * roll_rotation;
-  Eigen::Matrix3d desired_rotation_matrix = desired_gripper_quaternion.toRotationMatrix();
-  Eigen::Vector3d desired_gripper_position = wrist_position +
-      (desired_rotation_matrix * p_gripper_wrist);
-
-  desired_gripper_hybrid_pose_.cartesian_position.x = desired_gripper_position.x();
-  desired_gripper_hybrid_pose_.cartesian_position.y = desired_gripper_position.y();
-  desired_gripper_hybrid_pose_.cartesian_position.z = desired_gripper_position.z();
-  desired_gripper_hybrid_pose_.orientation.x = desired_gripper_quaternion.x();
-  desired_gripper_hybrid_pose_.orientation.y = desired_gripper_quaternion.y();
-  desired_gripper_hybrid_pose_.orientation.z = desired_gripper_quaternion.z();
-  desired_gripper_hybrid_pose_.orientation.w = desired_gripper_quaternion.w();
+  if (is_orientation_change_enabled_) {
+    this->calculateDesiredGripperOrientation();
+  }
 }
 
 void MotionControllerTeleoperation::calculateDesiredGripperPosition() {
@@ -505,31 +396,23 @@ void MotionControllerTeleoperation::calculateDesiredGripperPosition() {
 }
 
 CylindricalPoint MotionControllerTeleoperation::getCylindricalPositionDifference() {
-  // Since the radius cannot be obtained directly from cylindrical coordinates,
-  //   we calculate the radius difference by comparing the previous and current
-  //   left controller positions in Cartesian coordinates.
-  const double previous_hand_radius = std::hypot(
-      previous_left_controller_hybrid_pose_.cartesian_position.x,
-      previous_left_controller_hybrid_pose_.cartesian_position.y
-  );
-  const double current_hand_radius = std::hypot(
-      current_left_controller_hybrid_pose_.cartesian_position.x,
-      current_left_controller_hybrid_pose_.cartesian_position.y
-  );
-  const double step_radius = current_hand_radius - previous_hand_radius;
-  accumulated_radius_difference_ += step_radius;
-  previous_left_controller_hybrid_pose_ = current_left_controller_hybrid_pose_;
-
-  // Calculate full cylindrical position difference
-  CylindricalPoint position_difference;
-  position_difference.radius = accumulated_radius_difference_;
-  position_difference.yaw = this->restrictAngleWithinPI(
-      current_left_controller_hybrid_pose_.cylindrical_position.yaw -
-      initial_left_controller_hybrid_pose_.cylindrical_position.yaw);
-  position_difference.radius = accumulated_radius_difference_;
-  position_difference.height =
-      current_left_controller_hybrid_pose_.cylindrical_position.height -
-      initial_left_controller_hybrid_pose_.cylindrical_position.height;
+  const CylindricalPoint initial_cylindrical_position = {
+      std::hypot(initial_left_controller_pose_.pose.position.x, initial_left_controller_pose_.pose.position.y),
+      std::atan2(initial_left_controller_pose_.pose.position.y, initial_left_controller_pose_.pose.position.x),
+      initial_left_controller_pose_.pose.position.z
+  };
+  const CylindricalPoint current_cylindrical_position = {
+      std::hypot(current_left_controller_pose_.pose.position.x, current_left_controller_pose_.pose.position.y),
+      std::atan2(current_left_controller_pose_.pose.position.y, current_left_controller_pose_.pose.position.x),
+      current_left_controller_pose_.pose.position.z
+  };
+  const CylindricalPoint position_difference = {
+      current_cylindrical_position.radius - initial_cylindrical_position.radius,
+      this->restrictAngleWithinPI(
+          current_cylindrical_position.yaw - initial_cylindrical_position.yaw
+      ),
+      current_cylindrical_position.height - initial_cylindrical_position.height
+  };
   return position_difference;
 }
 
@@ -546,15 +429,15 @@ void MotionControllerTeleoperation::applyCylindricalPositionDifference(
     const CylindricalPoint& scaled_position_difference) {
   
   Eigen::Vector3d initial_gripper_position(
-      initial_gripper_hybrid_pose_.cartesian_position.x, 
-      initial_gripper_hybrid_pose_.cartesian_position.y, 
-      initial_gripper_hybrid_pose_.cartesian_position.z
+      initial_gripper_pose_.pose.position.x,
+      initial_gripper_pose_.pose.position.y,
+      initial_gripper_pose_.pose.position.z
   );
   Eigen::Quaterniond initial_gripper_quaternion(
-      initial_gripper_hybrid_pose_.orientation.w,
-      initial_gripper_hybrid_pose_.orientation.x, 
-      initial_gripper_hybrid_pose_.orientation.y, 
-      initial_gripper_hybrid_pose_.orientation.z
+      initial_gripper_pose_.pose.orientation.w,
+      initial_gripper_pose_.pose.orientation.x,
+      initial_gripper_pose_.pose.orientation.y,
+      initial_gripper_pose_.pose.orientation.z
   );
   Eigen::Matrix3d initial_gripper_rotation_matrix =
       initial_gripper_quaternion.toRotationMatrix();
@@ -590,31 +473,99 @@ void MotionControllerTeleoperation::applyCylindricalPositionDifference(
       std::sin(desired_wrist_cylindrical_position.yaw);
   desired_wrist_position.z() = desired_wrist_cylindrical_position.height;
   
-  Eigen::AngleAxisd yaw_rotation(scaled_position_difference.yaw, Eigen::Vector3d::UnitZ());  // global
+  Eigen::AngleAxisd yaw_rotation(scaled_position_difference.yaw, Eigen::Vector3d::UnitZ());
   Eigen::Quaterniond desired_gripper_quaternion = yaw_rotation * initial_gripper_quaternion;
   Eigen::Matrix3d desired_rotation_matrix = desired_gripper_quaternion.toRotationMatrix();
   Eigen::Vector3d desired_gripper_position = desired_wrist_position +
       (desired_rotation_matrix * p_gripper_wrist);
     
-  desired_gripper_hybrid_pose_.cartesian_position.x = desired_gripper_position.x();
-  desired_gripper_hybrid_pose_.cartesian_position.y = desired_gripper_position.y();
-  desired_gripper_hybrid_pose_.cartesian_position.z = desired_gripper_position.z();
-  desired_gripper_hybrid_pose_.orientation.x = desired_gripper_quaternion.x();
-  desired_gripper_hybrid_pose_.orientation.y = desired_gripper_quaternion.y();
-  desired_gripper_hybrid_pose_.orientation.z = desired_gripper_quaternion.z();
-  desired_gripper_hybrid_pose_.orientation.w = desired_gripper_quaternion.w();
+  desired_gripper_pose_.pose.position.x = desired_gripper_position.x();
+  desired_gripper_pose_.pose.position.y = desired_gripper_position.y();
+  desired_gripper_pose_.pose.position.z = desired_gripper_position.z();
+  desired_gripper_pose_.pose.orientation.x = desired_gripper_quaternion.x();
+  desired_gripper_pose_.pose.orientation.y= desired_gripper_quaternion.y();
+  desired_gripper_pose_.pose.orientation.z = desired_gripper_quaternion.z();
+  desired_gripper_pose_.pose.orientation.w = desired_gripper_quaternion.w();
+}
 
-  // desired_gripper_hybrid_pose_.updateFromCylindricalPoint(
-  //     desired_gripper_cylindrical_position,
-  //     control_view_offset_,
-  //     initial_lateral_offset_
-  // );
+void MotionControllerTeleoperation::calculateDesiredGripperOrientation() {
+  const RPY orientation_difference = this->getOrientationDifference();
+  const RPY scaled_orientation_difference = this->scaleOrientationDifference(orientation_difference);
+  this->applyOrientationDifference(scaled_orientation_difference);
+}
+
+RPY MotionControllerTeleoperation::getOrientationDifference() {
+  RPY initial_left_controller_rpy;
+  initial_left_controller_rpy.convertFromPoseStamped(initial_left_controller_pose_);
+  RPY current_left_controller_rpy;
+  current_left_controller_rpy.convertFromPoseStamped(current_left_controller_pose_);
+
+  RPY orientation_difference = {
+      this->restrictAngleWithinPI(current_left_controller_rpy.roll - initial_left_controller_rpy.roll),
+      this->restrictAngleWithinPI(current_left_controller_rpy.pitch - initial_left_controller_rpy.pitch),
+      this->restrictAngleWithinPI(current_left_controller_rpy.yaw - initial_left_controller_rpy.yaw)
+  };
+  return orientation_difference;
+}
+
+RPY MotionControllerTeleoperation::scaleOrientationDifference(const RPY& orientation_difference) {
+  /// Roll rotation is disabled
+  RPY scaled_orientation_difference;
+  scaled_orientation_difference.roll = orientation_difference.roll * orientation_scale_;
+  scaled_orientation_difference.pitch = orientation_difference.pitch * orientation_scale_;
+  scaled_orientation_difference.yaw = orientation_difference.yaw * orientation_scale_;
+  return scaled_orientation_difference;
+}
+
+void MotionControllerTeleoperation::applyOrientationDifference(const RPY& scaled_orientation_difference) {
+  Eigen::Vector3d initial_gripper_position(
+      initial_gripper_pose_.pose.position.x,
+      initial_gripper_pose_.pose.position.y,
+      initial_gripper_pose_.pose.position.z
+  );
+  Eigen::Quaterniond initial_gripper_quaternion(
+      initial_gripper_pose_.pose.orientation.w,
+      initial_gripper_pose_.pose.orientation.x, 
+      initial_gripper_pose_.pose.orientation.y, 
+      initial_gripper_pose_.pose.orientation.z
+  );
+  Eigen::Matrix3d initial_gripper_rotation_matrix =
+      initial_gripper_quaternion.toRotationMatrix();
+
+  const geometry_msgs::TransformStamped T_gripper_wrist =
+      tf2_listener_.lookupTransform<geometry_msgs::TransformStamped>(
+          "tm_wrist_2_link", "tm_gripper"
+      );
+  const Eigen::Vector3d p_gripper_wrist(
+      T_gripper_wrist.transform.translation.x,
+      T_gripper_wrist.transform.translation.y,
+      T_gripper_wrist.transform.translation.z
+  );
+  const Eigen::Vector3d wrist_position = initial_gripper_position -
+      (initial_gripper_rotation_matrix * p_gripper_wrist);
+
+  Eigen::AngleAxisd yaw_rotation(scaled_orientation_difference.yaw, Eigen::Vector3d::UnitZ());  // global
+  Eigen::AngleAxisd pitch_rotation(scaled_orientation_difference.pitch, Eigen::Vector3d::UnitX());  // local
+  Eigen::AngleAxisd roll_rotation(-scaled_orientation_difference.roll, Eigen::Vector3d::UnitZ());  // local
+  // = global_rotation * initial_quat * local_rotation
+  Eigen::Quaterniond desired_gripper_quaternion = yaw_rotation * initial_gripper_quaternion * pitch_rotation * roll_rotation;
+  Eigen::Matrix3d desired_rotation_matrix = desired_gripper_quaternion.toRotationMatrix();
+  Eigen::Vector3d desired_gripper_position = wrist_position +
+      (desired_rotation_matrix * p_gripper_wrist);
+
+  desired_gripper_pose_.pose.position.x = desired_gripper_position.x();
+  desired_gripper_pose_.pose.position.y = desired_gripper_position.y();
+  desired_gripper_pose_.pose.position.z = desired_gripper_position.z();
+  desired_gripper_pose_.pose.orientation.x = desired_gripper_quaternion.x();
+  desired_gripper_pose_.pose.orientation.y = desired_gripper_quaternion.y();
+  desired_gripper_pose_.pose.orientation.z = desired_gripper_quaternion.z();
+  desired_gripper_pose_.pose.orientation.w = desired_gripper_quaternion.w();
 }
 
 void MotionControllerTeleoperation::calculateUserCommandVelocity() {
   geometry_msgs::PointStamped waypoint;
-  waypoint.header = desired_gripper_hybrid_pose_.header;
-  waypoint.point = desired_gripper_hybrid_pose_.cartesian_position;
+  waypoint.header = desired_gripper_pose_.header;
+  waypoint.point = desired_gripper_pose_.pose.position;
   user_command_velocity_estimator_.addWaypoint(waypoint);
   user_command_velocity_estimator_.estimateVelocity();
   user_command_velocity_ = user_command_velocity_estimator_.getEstimatedVelocity();
@@ -661,7 +612,7 @@ void MotionControllerTeleoperation::calculateUserCommandVelocityMarker() {
   }
 
   user_command_velocity_marker_.action = visualization_msgs::Marker::ADD;
-  user_command_velocity_marker_.pose.position = desired_gripper_hybrid_pose_.cartesian_position;
+  user_command_velocity_marker_.pose.position = desired_gripper_pose_.pose.position;
   user_command_velocity_marker_.pose.orientation.x = q.x();
   user_command_velocity_marker_.pose.orientation.y = q.y();
   user_command_velocity_marker_.pose.orientation.z = q.z();
@@ -723,7 +674,7 @@ void MotionControllerTeleoperation::calculateGripperVelocityMarker() {
   }
 
   gripper_velocity_marker_.action = visualization_msgs::Marker::ADD;
-  gripper_velocity_marker_.pose.position = current_gripper_hybrid_pose_.cartesian_position;
+  gripper_velocity_marker_.pose.position = current_gripper_pose_.pose.position;
   gripper_velocity_marker_.pose.orientation.x = q.x();
   gripper_velocity_marker_.pose.orientation.y = q.y();
   gripper_velocity_marker_.pose.orientation.z = q.z();
