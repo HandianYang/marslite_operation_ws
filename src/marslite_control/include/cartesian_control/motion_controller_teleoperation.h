@@ -175,7 +175,7 @@ class MotionControllerTeleoperation {
   
 
   // ROS messages
-  geometry_msgs::PointStamped shoulder_position_;
+  geometry_msgs::Point shoulder_position_;
   geometry_msgs::Vector3 user_command_velocity_;
   geometry_msgs::Vector3 gripper_velocity_;
   geometry_msgs::Twist mobile_platform_velocity_;

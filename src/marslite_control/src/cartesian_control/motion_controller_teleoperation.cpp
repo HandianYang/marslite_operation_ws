@@ -220,7 +220,6 @@ void MotionControllerTeleoperation::initializeSubscribers() {
 void MotionControllerTeleoperation::initializeHeadersForMessages() {
   initial_left_controller_pose_.header.frame_id = "vr_origin";
   current_left_controller_pose_.header.frame_id = "vr_origin";
-  shoulder_position_.header.frame_id = "vr_origin";
 
   initial_gripper_pose_.header.frame_id = "tm_base";
   current_gripper_pose_.header.frame_id = "tm_base";
@@ -290,12 +289,12 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
     case 1:
       // [0] X button: Calibrate the shoulder point
       if (msg->buttons[0] == 1) {
-        shoulder_position_.point = current_left_controller_pose_.pose.position;
+        shoulder_position_ = current_left_controller_pose_.pose.position;
         is_shoulder_position_calibrated_ = true;
         ROS_INFO_STREAM("Complete calibration of the shoulder point at: ("
-            << shoulder_position_.point.x << ", "
-            << shoulder_position_.point.y << ", "
-            << shoulder_position_.point.z << ")"
+            << shoulder_position_.x << ", "
+            << shoulder_position_.y << ", "
+            << shoulder_position_.z << ")"
         );
       }
       break;
@@ -404,16 +403,26 @@ void MotionControllerTeleoperation::calculateDesiredGripperPosition() {
 }
 
 CylindricalPoint MotionControllerTeleoperation::getCylindricalPositionDifference() {
+  geometry_msgs::Point p_shoulder_hand_init;
+  p_shoulder_hand_init.x = initial_left_controller_pose_.pose.position.x - shoulder_position_.x;
+  p_shoulder_hand_init.y = initial_left_controller_pose_.pose.position.y - shoulder_position_.y;
+  p_shoulder_hand_init.z = initial_left_controller_pose_.pose.position.z - shoulder_position_.z;
   const CylindricalPoint initial_cylindrical_position = {
-      std::hypot(initial_left_controller_pose_.pose.position.x, initial_left_controller_pose_.pose.position.y),
-      std::atan2(initial_left_controller_pose_.pose.position.y, initial_left_controller_pose_.pose.position.x),
-      initial_left_controller_pose_.pose.position.z
+      std::hypot(p_shoulder_hand_init.x, p_shoulder_hand_init.y),
+      std::atan2(p_shoulder_hand_init.y, p_shoulder_hand_init.x),
+      p_shoulder_hand_init.z
   };
+
+  geometry_msgs::Point p_shoulder_hand_curr;
+  p_shoulder_hand_curr.x = current_left_controller_pose_.pose.position.x - shoulder_position_.x;
+  p_shoulder_hand_curr.y = current_left_controller_pose_.pose.position.y - shoulder_position_.y;
+  p_shoulder_hand_curr.z = current_left_controller_pose_.pose.position.z - shoulder_position_.z;
   const CylindricalPoint current_cylindrical_position = {
-      std::hypot(current_left_controller_pose_.pose.position.x, current_left_controller_pose_.pose.position.y),
-      std::atan2(current_left_controller_pose_.pose.position.y, current_left_controller_pose_.pose.position.x),
-      current_left_controller_pose_.pose.position.z
+      std::hypot(p_shoulder_hand_curr.x, p_shoulder_hand_curr.y),
+      std::atan2(p_shoulder_hand_curr.y, p_shoulder_hand_curr.x),
+      p_shoulder_hand_curr.z
   };
+  
   const CylindricalPoint position_difference = {
       current_cylindrical_position.radius - initial_cylindrical_position.radius,
       this->restrictAngleWithinPI(
