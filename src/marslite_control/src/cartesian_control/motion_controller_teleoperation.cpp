@@ -459,15 +459,7 @@ void MotionControllerTeleoperation::applyCylindricalPositionDifference(
   Eigen::Matrix3d initial_gripper_rotation_matrix =
       initial_gripper_quaternion.toRotationMatrix();
 
-  const geometry_msgs::TransformStamped T_gripper_wrist =
-      tf2_listener_.lookupTransform<geometry_msgs::TransformStamped>(
-          "tm_wrist_2_link", "tm_gripper"
-      );
-  const Eigen::Vector3d p_gripper_wrist(
-      T_gripper_wrist.transform.translation.x,
-      T_gripper_wrist.transform.translation.y,
-      T_gripper_wrist.transform.translation.z
-  );
+  const Eigen::Vector3d p_gripper_wrist(0.0, 0.0, -0.291);
   const Eigen::Vector3d initial_wrist_position = initial_gripper_position -
       (initial_gripper_rotation_matrix * p_gripper_wrist);
   const CylindricalPoint initial_wrist_cylindrical_position = {
