@@ -6,7 +6,7 @@ int main(int argc, char **argv) {
   ros::init(argc, argv, "test_cartesian_control");
   ros::NodeHandle nh;
   ros::Publisher target_frame_pub = nh.advertise<geometry_msgs::PoseStamped>(
-      "/marslite_cartesian_motion_controller/target_frame", 1);
+      "/target_frame", 1);
   
   // Change your initial_pose and target_pose here for testing
   //  (e.g.) `marslite::sim::kFrontInitialGripperPose` for simulation

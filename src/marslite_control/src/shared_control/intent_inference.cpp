@@ -74,12 +74,14 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
     text_marker.action = visualization_msgs::Marker::ADD;
     text_marker.pose.position = position_wrt_tm_base_[object].point;
     text_marker.pose.position.z += 0.15;
-    text_marker.scale.z = 0.03;
+    text_marker.scale.z = 0.06;
     text_marker.color.r = 1.0;
     text_marker.color.g = 1.0;
     text_marker.color.b = 1.0;
     text_marker.color.a = 1.0;
-    text_marker.text = std::to_string(belief_value);
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2) << belief_value;
+    text_marker.text = oss.str();
     text_marker.lifetime = ros::Duration(1.0);
     marker_array.markers.push_back(text_marker);
   }
@@ -96,10 +98,10 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
   gripper_marker.pose.position.y = gripper_position_.y;
   gripper_marker.pose.position.z = gripper_position_.z;
   gripper_marker.pose.orientation.w = 1.0;
-  gripper_marker.scale.x = 0.1;
-  gripper_marker.scale.y = 0.1;
-  gripper_marker.scale.z = 0.1;
-  gripper_marker.color.a = 0.2;
+  gripper_marker.scale.x = 0.5;
+  gripper_marker.scale.y = 0.5;
+  gripper_marker.scale.z = 0.5;
+  gripper_marker.color.a = 0.1;
   gripper_marker.lifetime = ros::Duration(1.0);
 
   switch (robot_state_) {

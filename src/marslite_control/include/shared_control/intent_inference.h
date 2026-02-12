@@ -70,7 +70,7 @@ class IntentInference {
   // [m] Used for isNearTarget() and isTargetReached()
   static inline constexpr double kZDistanceThreshold = 0.15;
   // [m] Ready-to-pick zone
-  static inline constexpr double kNearDistanceThreshold = 0.02;
+  static inline constexpr double kNearDistanceThreshold = 0.03;
   // [m] 
   static inline constexpr double kPositionTolerance = 5e-3;
   // [m]
