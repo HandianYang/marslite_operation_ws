@@ -19,7 +19,7 @@ class SharedControl {
  public:
   static inline constexpr double kDistanceTolerance = 1e-3;
   // normally >= 1.0 to enhance attractive force
-  static inline constexpr double kAttractiveForceGain = 1.8;
+  static inline constexpr double kAttractiveForceGain = 2.0;
   // "weak" means weak repulsive force (less restriction)
   static inline constexpr double kRepulsiveForceWeakGain = 0.8;
   // "strong" means strong repulsive force (more restriction)

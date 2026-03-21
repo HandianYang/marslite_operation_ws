@@ -9,6 +9,7 @@
 
 MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHandle& nh)
     : nh_(nh), loop_rate_(50), 
+      is_ready_to_teleop_(false),
       is_position_change_enabled_(false),
       is_orientation_change_enabled_(false),
       is_shoulder_position_calibrated_(false) {
@@ -27,8 +28,11 @@ MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHand
  ****************************************************** */
 
 void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseStamped& target_pose) {
+  is_ready_to_teleop_ = false; // Disable teleoperation during guiding phase
+
   this->initializeGripperPose();
-  target_frame_publisher_.publish(target_pose);
+  // target_frame_publisher_.publish(target_pose);
+  desired_gripper_pose_publisher_.publish(target_pose);
   
   ROS_INFO_STREAM("Guiding to initial gripper pose: \n"
       << " - Position: (" 
@@ -50,8 +54,9 @@ void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseS
     ros::spinOnce();
   }
 
-  ROS_INFO_STREAM("Reached the target pose. Remember to calibrate your shoulder "
-      << "position before teleoperation.");
+  ROS_INFO_STREAM("Reached the target pose.");
+  ROS_INFO_STREAM_ONCE("Remember to calibrate your shoulder position before teleoperation.");
+  is_ready_to_teleop_ = true;
 }
 
 geometry_msgs::PoseStamped MotionControllerTeleoperation::generateInitialGripperPose(
@@ -93,6 +98,12 @@ void MotionControllerTeleoperation::run() {
   this->initializeLeftControllerPose();
   while (nh_.ok()) {
     this->updateGripperPose();
+    if (!is_ready_to_teleop_) {
+      loop_rate_.sleep();
+      ros::spinOnce();
+      continue;
+    }
+
     {
       std::lock_guard<std::mutex> lock(desired_gripper_pose_mutex_);
       if (this->isAnySafetyButtonPressed()) {
@@ -193,6 +204,8 @@ void MotionControllerTeleoperation::initializePublishers() {
       "/marslite_control/orientation_safety_button_signal", 1);
   mobile_platform_velocity_publisher_ = nh_.advertise<geometry_msgs::Twist>(
       "/mob_plat/cmd_vel", 1);
+  restart_attempt_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
+      "/marslite_control/restart_attempt_signal", 1);
   record_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
       "/marslite_control/record_signal", 1);
   
@@ -246,6 +259,10 @@ void MotionControllerTeleoperation::leftControllerPoseCallback(
 }
 
 void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs::Joy::ConstPtr& msg) {
+  if (!is_ready_to_teleop_) {
+    return; // Ignore joystick input if not ready to teleop
+  }
+  
   switch (msg->axes.size()) {
     case 4:
       // [3] primary hand trigger: Enable/disable orientational change
@@ -275,6 +292,39 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
   }
 
   switch (msg->buttons.size()) {
+    case 5:
+      // [4] B button: Drive the robot back to the initial pose
+      if (msg->buttons[4] == 1) {
+        // Reset to initial pose after pressing the button for 1 second
+        static ros::Time b_button_press_start_time = ros::Time(0);
+        if (b_button_press_start_time.isZero()) {
+          b_button_press_start_time = ros::Time::now();
+        } else if ((ros::Time::now() - b_button_press_start_time).toSec() > 1.0) {
+          ROS_INFO("Reset robot pose to the inital pose...");
+          b_button_press_start_time = ros::Time(0); // Reset after publishing
+          // TODO: consider resetting to different initial poses
+          this->resetToLeftPose();
+        }
+      }
+    case 4:
+      // [3] A button: Restart this attempt 
+      if (msg->buttons[3] == 1) {
+        // Send attempt restart signal and reset to initial pose after pressing
+        //  the button for 1 second
+        static ros::Time a_button_press_start_time = ros::Time(0);
+        if (a_button_press_start_time.isZero()) {
+          a_button_press_start_time = ros::Time::now();
+        } else if ((ros::Time::now() - a_button_press_start_time).toSec() > 1.0) {
+          ROS_INFO("Restart this attempt. Reset robot pose to the inital pose...");
+          // TODO: consider resetting to different initial poses
+          this->resetToLeftPose();
+
+          std_msgs::Bool signal;
+          signal.data = true;
+          restart_attempt_signal_publisher_.publish(signal);
+          a_button_press_start_time = ros::Time(0); // Reset after publishing
+        }
+      }
     case 3:
       // [2] stick button: Send `record_signal` to `shared_control`
       if (msg->buttons[2] == 1) {

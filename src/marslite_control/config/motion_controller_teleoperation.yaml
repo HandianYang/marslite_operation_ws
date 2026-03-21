@@ -11,5 +11,5 @@ robotic_arm:
   # w.r.t. gripper 
   orientation:
     roll_scale: 0   # roll rotation is disabled
-    pitch_scale: 0.5
-    yaw_scale: 0.8
+    pitch_scale: 0.7
+    yaw_scale: 1.0

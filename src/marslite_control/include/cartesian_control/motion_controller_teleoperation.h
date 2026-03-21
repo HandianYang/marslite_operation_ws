@@ -160,6 +160,7 @@ class MotionControllerTeleoperation {
   ros::Publisher desired_gripper_pose_publisher_; // for pure teleoperation & shared control
   ros::Publisher current_gripper_pose_publisher_;
   ros::Publisher gripper_status_publisher_;
+  ros::Publisher restart_attempt_signal_publisher_;
   ros::Publisher record_signal_publisher_;
   ros::Publisher position_safety_button_signal_publisher_;
   ros::Publisher orientation_safety_button_signal_publisher_;
@@ -187,6 +188,7 @@ class MotionControllerTeleoperation {
   visualization_msgs::Marker gripper_velocity_marker_;
 
   // flags
+  bool is_ready_to_teleop_;
   bool is_position_change_enabled_;
   bool is_orientation_change_enabled_;
   bool use_shared_controller_;  // false if using pure teleoperation
