@@ -6,7 +6,7 @@ robotic_arm:
   # w.r.t. base
   position:
     radius_scale: 0.8
-    yaw_scale: 0.8
+    yaw_scale: 1.0
     height_scale: 0.8
   # w.r.t. gripper 
   orientation:

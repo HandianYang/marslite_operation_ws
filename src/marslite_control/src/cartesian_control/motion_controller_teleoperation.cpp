@@ -316,13 +316,13 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
           a_button_press_start_time = ros::Time::now();
         } else if ((ros::Time::now() - a_button_press_start_time).toSec() > 1.0) {
           ROS_INFO("Restart this attempt. Reset robot pose to the inital pose...");
+          a_button_press_start_time = ros::Time(0); // Reset after publishing
           // TODO: consider resetting to different initial poses
-          this->resetToLeftPose();
+          this->resetToReadyPose();
 
           std_msgs::Bool signal;
           signal.data = true;
           restart_attempt_signal_publisher_.publish(signal);
-          a_button_press_start_time = ros::Time(0); // Reset after publishing
         }
       }
     case 3:

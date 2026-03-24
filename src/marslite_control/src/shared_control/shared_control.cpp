@@ -61,12 +61,12 @@ void SharedControl::runInferenceOnce() {
     intent_inference_.updateGripperPosition();
     intent_inference_.updateRobotState();
     intent_inference_.updateBelief();
-    this->publishIntentBeliefVisualization();
     this->publishRobotState();
   }
   
   this->publishBlendedGripperPose();
   this->publishObjectsWithBelief();
+  this->publishIntentBeliefVisualization();
 }
 
 /******************************************************

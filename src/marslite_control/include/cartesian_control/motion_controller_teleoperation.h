@@ -41,6 +41,19 @@ class MotionControllerTeleoperation {
 
   explicit MotionControllerTeleoperation(const ros::NodeHandle& nh = ros::NodeHandle());
 
+  inline void resetToReadyPose() {
+    geometry_msgs::PoseStamped pose;
+    pose.header.frame_id = "tm_base";
+    pose.pose.position.x = 0.122;
+    pose.pose.position.y = 0.35;
+    pose.pose.position.z = 0.6;
+    pose.pose.orientation.x = 0.0;
+    pose.pose.orientation.y = 0.707;
+    pose.pose.orientation.z = 0.707;
+    pose.pose.orientation.w = 0.0;
+    this->teleoperateToPose(pose);
+  }
+
   inline void resetToFrontPose() {
     this->teleoperateToPose(
         MotionControllerTeleoperation::generateInitialGripperPose(

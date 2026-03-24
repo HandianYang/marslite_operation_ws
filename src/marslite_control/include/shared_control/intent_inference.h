@@ -80,7 +80,7 @@ class IntentInference {
   // [m/s]
   static inline constexpr double kUserCommandSpeedTolerance = 0.15;
   // [rad] cos(45 degrees) = 0.707
-  static inline constexpr double kTowardTargetDirectionSimilarityThreshold = 0.707;
+  static inline constexpr double kTowardTargetDirectionSimilarityThreshold = 0.5;
   // [rad] cos(135 degrees) = -0.707
   static inline constexpr double kAwayTargetDirectionSimilarityThreshold = -0.707;
   // [s] 
