@@ -38,7 +38,11 @@ class MotionControllerTeleoperation {
   static inline constexpr size_t kEstimatorBufferSize = 30;
   // minimum speed for velocity estimator
   static inline constexpr double kEstimatorMinSpeed = 0.15;
-
+  
+  static constexpr double kWristRadiusMin = 0.05;
+  static constexpr double kWristRadiusMax = 0.45;
+  static constexpr double kWristHeightMin = 0.05;
+  static constexpr double kWristHeightMax = 0.9;
   explicit MotionControllerTeleoperation(const ros::NodeHandle& nh = ros::NodeHandle());
 
   inline void resetToReadyPose() {
@@ -190,6 +194,7 @@ class MotionControllerTeleoperation {
 
   // ROS messages
   geometry_msgs::Point shoulder_position_;
+  geometry_msgs::Point elbow_position_;	// origin of the cylindrical coordinates
   geometry_msgs::Vector3 user_command_velocity_;
   geometry_msgs::Vector3 gripper_velocity_;
   geometry_msgs::Twist mobile_platform_velocity_;
