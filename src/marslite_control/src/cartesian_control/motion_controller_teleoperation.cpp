@@ -8,11 +8,20 @@
  ****************************************************** */
 
 MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHandle& nh)
-    : nh_(nh), loop_rate_(50), 
+    : nh_(nh), loop_rate_(50),
       is_ready_to_teleop_(false),
       is_position_change_enabled_(false),
       is_orientation_change_enabled_(false),
-      is_shoulder_position_calibrated_(false) {
+      is_shoulder_position_calibrated_(false),
+      control_view_angle_(0.0),
+      last_position_yaw_(0.0),
+      gripper_position_radius_min_(0.10),
+      gripper_position_radius_max_(0.65),
+      gripper_position_height_min_(0.05),
+      gripper_position_height_max_(0.90),
+      gripper_orientation_roll_limit_(M_PI / 4),
+      gripper_orientation_pitch_limit_(M_PI / 4),
+      gripper_orientation_yaw_limit_(M_PI / 4) {
   this->parseParameters();
   this->initializePublishers();
   this->initializeSubscribers();
@@ -158,11 +167,26 @@ void MotionControllerTeleoperation::parseParameters() {
   nh_.getParam("robotic_arm/position/radius_scale", gripper_position_radius_scale_);
   nh_.getParam("robotic_arm/position/yaw_scale", gripper_position_yaw_scale_);
   nh_.getParam("robotic_arm/position/height_scale", gripper_position_height_scale_);
+  nh_.getParam("robotic_arm/position/radius_min", gripper_position_radius_min_);
+  nh_.getParam("robotic_arm/position/radius_max", gripper_position_radius_max_);
+  nh_.getParam("robotic_arm/position/height_min", gripper_position_height_min_);
+  nh_.getParam("robotic_arm/position/height_max", gripper_position_height_max_);
   nh_.getParam("robotic_arm/orientation/roll_scale", gripper_orientation_roll_scale_);
   nh_.getParam("robotic_arm/orientation/pitch_scale", gripper_orientation_pitch_scale_);
   nh_.getParam("robotic_arm/orientation/yaw_scale", gripper_orientation_yaw_scale_);
-  
-  ROS_INFO_STREAM(std::boolalpha << "Parameters: " 
+
+  // Orientation limits are specified in degrees in YAML for readability
+  double roll_limit_deg = gripper_orientation_roll_limit_ * 180.0 / M_PI;
+  double pitch_limit_deg = gripper_orientation_pitch_limit_ * 180.0 / M_PI;
+  double yaw_limit_deg = gripper_orientation_yaw_limit_ * 180.0 / M_PI;
+  nh_.getParam("robotic_arm/orientation/roll_limit_deg", roll_limit_deg);
+  nh_.getParam("robotic_arm/orientation/pitch_limit_deg", pitch_limit_deg);
+  nh_.getParam("robotic_arm/orientation/yaw_limit_deg", yaw_limit_deg);
+  gripper_orientation_roll_limit_  = roll_limit_deg  * M_PI / 180.0;
+  gripper_orientation_pitch_limit_ = pitch_limit_deg * M_PI / 180.0;
+  gripper_orientation_yaw_limit_   = yaw_limit_deg   * M_PI / 180.0;
+
+  ROS_INFO_STREAM(std::boolalpha << "Parameters: "
       << "\n * use_sim: " << use_sim_
       << "\n * use_shared_controller: " << use_shared_controller_
       << "\n * platform_linear_scale: " << platform_linear_scale_
@@ -170,9 +194,16 @@ void MotionControllerTeleoperation::parseParameters() {
       << "\n * gripper_position_radius_scale: " << gripper_position_radius_scale_
       << "\n * gripper_position_yaw_scale: " << gripper_position_yaw_scale_
       << "\n * gripper_position_height_scale: " << gripper_position_height_scale_
+      << "\n * gripper_position_radius_min: " << gripper_position_radius_min_
+      << "\n * gripper_position_radius_max: " << gripper_position_radius_max_
+      << "\n * gripper_position_height_min: " << gripper_position_height_min_
+      << "\n * gripper_position_height_max: " << gripper_position_height_max_
       << "\n * gripper_orientation_roll_scale: " << gripper_orientation_roll_scale_
       << "\n * gripper_orientation_pitch_scale: " << gripper_orientation_pitch_scale_
       << "\n * gripper_orientation_yaw_scale: " << gripper_orientation_yaw_scale_
+      << "\n * gripper_orientation_roll_limit: " << roll_limit_deg << " deg"
+      << "\n * gripper_orientation_pitch_limit: " << pitch_limit_deg << " deg"
+      << "\n * gripper_orientation_yaw_limit: " << yaw_limit_deg << " deg"
   );
 }
 
@@ -412,6 +443,10 @@ const bool MotionControllerTeleoperation::targetPoseIsReached(
 
 void MotionControllerTeleoperation::initializeGripperPose() {
   initial_gripper_pose_ = desired_gripper_pose_ = current_gripper_pose_;
+  // Accumulate yaw applied during the last position control session into
+  // control_view_angle_, then clear it so subsequent calls are no-ops.
+  control_view_angle_ = restrictAngleWithinPI(control_view_angle_ + last_position_yaw_);
+  last_position_yaw_ = 0.0;
 }
 
 void MotionControllerTeleoperation::initializeLeftControllerPose() {
@@ -425,21 +460,20 @@ void MotionControllerTeleoperation::updateGripperPose() {
       target_frame, source_frame
   );
   current_gripper_pose_publisher_.publish(current_gripper_pose_);
-  
-  // Convert from orientation to RPY
-  tf2::Quaternion tf2_quat;
-  tf2::fromMsg(current_gripper_pose_.pose.orientation, tf2_quat);
-  tf2::Matrix3x3 matrix(tf2_quat);
 
-  double roll, pitch, yaw;
-  matrix.getRPY(roll, pitch, yaw);
-  
   // Calculate the correct origin of the cylindrical coordinates
+  RPY current_gripper_rpy;
+  current_gripper_rpy.convertFromPoseStamped(current_gripper_pose_);
+
+  // NOTE: The system assumes that the X axis of `vr_origin` and `tm_base` are
+  //  both pointing forward, and the yaw rotation of the gripper is around the
+  //  Z axis. If the actual setup is different, the calculation of
+  //  `elbow_position_` may need to be adjusted accordingly.
   elbow_position_ = shoulder_position_;
-  double elbow_position_offset = yaw * 180 / M_PI / 1000;  // +100 deg for -5cm
-  if (std::abs(elbow_position_offset) >= 0.05)
-    elbow_position_offset = elbow_position_offset / std::abs(elbow_position_offset) * 0.05;
-  elbow_position_.x -= elbow_position_offset;  
+  double elbow_position_offset = current_gripper_rpy.yaw * 180 / M_PI / 1000;  // +100 deg for -10cm
+  if (std::abs(elbow_position_offset) >= 0.1) // [m]
+    elbow_position_offset = elbow_position_offset / std::abs(elbow_position_offset) * 0.1;
+  elbow_position_.x -= elbow_position_offset;
 }
 
 void MotionControllerTeleoperation::updateGripperVelocity() {
@@ -462,147 +496,74 @@ void MotionControllerTeleoperation::calculateDesiredGripperPose() {
 }
 
 void MotionControllerTeleoperation::calculateDesiredGripperPosition() {
-  CylindricalPoint position_difference = this->getCylindricalPositionDifference();
-  CylindricalPoint scaled_position_difference = this->scaleCylindricalPositionDifference(position_difference);
-  this->applyCylindricalPositionDifference(scaled_position_difference);
+  CylindricalPoint pos_diff = this->getCylindricalPositionDifference();
+  CylindricalPoint scaled_diff = this->scaleCylindricalPositionDifference(pos_diff);
+  this->applyCylindricalPositionDifference(scaled_diff);
 }
 
 CylindricalPoint MotionControllerTeleoperation::getCylindricalPositionDifference() {
-  // geometry_msgs::Point p_shoulder_hand_init;
-  // p_shoulder_hand_init.x = initial_left_controller_pose_.pose.position.x - shoulder_position_.x;
-  // p_shoulder_hand_init.y = initial_left_controller_pose_.pose.position.y - shoulder_position_.y;
-  // p_shoulder_hand_init.z = initial_left_controller_pose_.pose.position.z - shoulder_position_.z;
-  
-  geometry_msgs::Point p_elbow_hand_init;
-  p_elbow_hand_init.x = initial_left_controller_pose_.pose.position.x - elbow_position_.x;
-  p_elbow_hand_init.y = initial_left_controller_pose_.pose.position.y - elbow_position_.y;
-  p_elbow_hand_init.z = initial_left_controller_pose_.pose.position.z - elbow_position_.z;
-  const CylindricalPoint initial_cylindrical_position = {
-      std::hypot(p_elbow_hand_init.x, p_elbow_hand_init.y),
-      std::atan2(p_elbow_hand_init.y, p_elbow_hand_init.x),
-      p_elbow_hand_init.z
+  geometry_msgs::Point init_hand_pos;
+  init_hand_pos.x = initial_left_controller_pose_.pose.position.x - elbow_position_.x;
+  init_hand_pos.y = initial_left_controller_pose_.pose.position.y - elbow_position_.y;
+  init_hand_pos.z = initial_left_controller_pose_.pose.position.z - elbow_position_.z;
+  const CylindricalPoint init_hand_cpos = {
+      std::hypot(init_hand_pos.x, init_hand_pos.y),
+      std::atan2(init_hand_pos.y, init_hand_pos.x),
+      init_hand_pos.z
   };
 
-  geometry_msgs::Point p_elbow_hand_curr;
-  p_elbow_hand_curr.x = current_left_controller_pose_.pose.position.x - elbow_position_.x;
-  p_elbow_hand_curr.y = current_left_controller_pose_.pose.position.y - elbow_position_.y;
-  p_elbow_hand_curr.z = current_left_controller_pose_.pose.position.z - elbow_position_.z;
-  const CylindricalPoint current_cylindrical_position = {
-      std::hypot(p_elbow_hand_curr.x, p_elbow_hand_curr.y),
-      std::atan2(p_elbow_hand_curr.y, p_elbow_hand_curr.x),
-      p_elbow_hand_curr.z
+  geometry_msgs::Point curr_hand_pos;
+  curr_hand_pos.x = current_left_controller_pose_.pose.position.x - elbow_position_.x;
+  curr_hand_pos.y = current_left_controller_pose_.pose.position.y - elbow_position_.y;
+  curr_hand_pos.z = current_left_controller_pose_.pose.position.z - elbow_position_.z;
+  const CylindricalPoint curr_hand_cpos = {
+      std::hypot(curr_hand_pos.x, curr_hand_pos.y),
+      std::atan2(curr_hand_pos.y, curr_hand_pos.x),
+      curr_hand_pos.z
   };
   
-  const CylindricalPoint position_difference = {
-      current_cylindrical_position.radius - initial_cylindrical_position.radius,
+  const CylindricalPoint pos_diff = {
+      curr_hand_cpos.radius - init_hand_cpos.radius,
       this->restrictAngleWithinPI(
-          current_cylindrical_position.yaw - initial_cylindrical_position.yaw
+          curr_hand_cpos.yaw - init_hand_cpos.yaw
       ),
-      current_cylindrical_position.height - initial_cylindrical_position.height
+      curr_hand_cpos.height - init_hand_cpos.height
   };
-  return position_difference;
+  return pos_diff;
 }
 
 CylindricalPoint MotionControllerTeleoperation::scaleCylindricalPositionDifference(
-    const CylindricalPoint& position_difference) {
-  CylindricalPoint scaled_point_difference;
-  scaled_point_difference.radius = position_difference.radius * gripper_position_radius_scale_;
-  scaled_point_difference.yaw = position_difference.yaw * gripper_position_yaw_scale_;
-  scaled_point_difference.height = position_difference.height * gripper_position_height_scale_;
-  return scaled_point_difference;
+    const CylindricalPoint& pos_diff) {
+  CylindricalPoint scaled_diff;
+  scaled_diff.radius = pos_diff.radius * gripper_position_radius_scale_;
+  scaled_diff.yaw = pos_diff.yaw * gripper_position_yaw_scale_;
+  scaled_diff.height = pos_diff.height * gripper_position_height_scale_;
+  return scaled_diff;
 }
 
 void MotionControllerTeleoperation::applyCylindricalPositionDifference(
-    const CylindricalPoint& scaled_position_difference) {
+    const CylindricalPoint& scaled_diff) {
+  // Track the net yaw applied in this position control session so that
+  // initializeGripperPose() can fold it into control_view_angle_ when the
+  // safety button is released (session ends).
+  last_position_yaw_ = scaled_diff.yaw;
+
+  // Calculate desired_gripper_position
+  Eigen::Vector3d position_with_radius_height =
+      this->getPositionWithRadiusAndHeightApplied(scaled_diff);
+  Eigen::AngleAxisd yaw_rotation(scaled_diff.yaw, Eigen::Vector3d::UnitZ());
+  Eigen::Vector3d desired_gripper_position = yaw_rotation * position_with_radius_height;
   
-  Eigen::Vector3d initial_gripper_position(
-      initial_gripper_pose_.pose.position.x,
-      initial_gripper_pose_.pose.position.y,
-      initial_gripper_pose_.pose.position.z
-  );
+  // Calculate desired_gripper_quaternion
   Eigen::Quaterniond initial_gripper_quaternion(
       initial_gripper_pose_.pose.orientation.w,
       initial_gripper_pose_.pose.orientation.x,
       initial_gripper_pose_.pose.orientation.y,
       initial_gripper_pose_.pose.orientation.z
   );
-  Eigen::Matrix3d initial_gripper_rotation_matrix =
-      initial_gripper_quaternion.toRotationMatrix();
-
-  const CylindricalPoint initial_gripper_cylindrical_position = {
-      std::hypot(initial_gripper_position.x(), initial_gripper_position.y()),
-      std::atan2(initial_gripper_position.y(), initial_gripper_position.x()),
-      initial_gripper_position.z()
-  };
-  CylindricalPoint desired_gripper_cylindrical_position;
-  desired_gripper_cylindrical_position.radius =
-      initial_gripper_cylindrical_position.radius + scaled_position_difference.radius;
-  // desired_wrist_cylindrical_position.radius = std::clamp(
-  //     initial_wrist_cylindrical_position.radius + scaled_position_difference.radius,
-  //     kWristRadiusMin,
-  //     kWristRadiusMax
-  // );
-  desired_gripper_cylindrical_position.yaw =
-      initial_gripper_cylindrical_position.yaw + scaled_position_difference.yaw;
-  // desired_gripper_cylindrical_position.height = std::clamp(
-  //     initial_gripper_cylindrical_position.height + scaled_position_difference.height,
-  //     kWristHeightMin,
-  //     kWristHeightMax
-  // );
-  desired_gripper_cylindrical_position.height =
-      initial_gripper_cylindrical_position.height + scaled_position_difference.height;
-
-  Eigen::Vector3d desired_gripper_position;
-  desired_gripper_position.x() = desired_gripper_cylindrical_position.radius *
-      std::cos(desired_gripper_cylindrical_position.yaw);
-  desired_gripper_position.y() = desired_gripper_cylindrical_position.radius *
-      std::sin(desired_gripper_cylindrical_position.yaw);
-  desired_gripper_position.z() = desired_gripper_cylindrical_position.height;
-  std::cout << desired_gripper_position.x() << ' '
-      << desired_gripper_position.y() << ' '
-      << desired_gripper_position.z() << std::endl;
-
-  const Eigen::Vector3d p_gripper_wrist(0.0, 0.0, -0.291);
-  const Eigen::Vector3d initial_wrist_position = initial_gripper_position +
-      (initial_gripper_rotation_matrix * p_gripper_wrist);
-  // std::cout << initial_wrist_position.x() << ' '
-  //     << initial_wrist_position.y() << ' '
-  //     << initial_wrist_position.z() << std::endl;
-  const CylindricalPoint initial_wrist_cylindrical_position = {
-      std::hypot(initial_wrist_position.x(), initial_wrist_position.y()),
-      std::atan2(initial_wrist_position.y(), initial_wrist_position.x()),
-      initial_wrist_position.z()
-  };
-  // Clamp radius and height to avoid weird robot poses
-  CylindricalPoint desired_wrist_cylindrical_position;
-  desired_wrist_cylindrical_position.radius = initial_wrist_cylindrical_position.radius + scaled_position_difference.radius;
-  // desired_wrist_cylindrical_position.radius = std::clamp(
-  //     initial_wrist_cylindrical_position.radius + scaled_position_difference.radius,
-  //     kWristRadiusMin,
-  //     kWristRadiusMax
-  // );
-  desired_wrist_cylindrical_position.yaw =
-      initial_wrist_cylindrical_position.yaw + scaled_position_difference.yaw;
-  desired_wrist_cylindrical_position.height = std::clamp(
-      initial_wrist_cylindrical_position.height + scaled_position_difference.height,
-      kWristHeightMin,
-      kWristHeightMax
-  );
-  //std::cout << initial_wrist_cylindrical_position.radius + scaled_position_difference.radius << std::endl;
-  
-  Eigen::Vector3d desired_wrist_position;
-  desired_wrist_position.x() = desired_wrist_cylindrical_position.radius *
-      std::cos(desired_wrist_cylindrical_position.yaw);
-  desired_wrist_position.y() = desired_wrist_cylindrical_position.radius *
-      std::sin(desired_wrist_cylindrical_position.yaw);
-  desired_wrist_position.z() = desired_wrist_cylindrical_position.height;
-  
-  Eigen::AngleAxisd yaw_rotation(scaled_position_difference.yaw, Eigen::Vector3d::UnitZ());
   Eigen::Quaterniond desired_gripper_quaternion = yaw_rotation * initial_gripper_quaternion;
-  // Eigen::Matrix3d desired_rotation_matrix = desired_gripper_quaternion.toRotationMatrix();
-  // Eigen::Vector3d desired_gripper_position = desired_wrist_position -
-  //     (desired_rotation_matrix * p_gripper_wrist);
-    
+  
+  // Apply changes to the output
   desired_gripper_pose_.pose.position.x = desired_gripper_position.x();
   desired_gripper_pose_.pose.position.y = desired_gripper_position.y();
   desired_gripper_pose_.pose.position.z = desired_gripper_position.z();
@@ -612,35 +573,84 @@ void MotionControllerTeleoperation::applyCylindricalPositionDifference(
   desired_gripper_pose_.pose.orientation.w = desired_gripper_quaternion.w();
 }
 
+Eigen::Vector3d MotionControllerTeleoperation::getPositionWithRadiusAndHeightApplied(
+    const CylindricalPoint& scaled_diff) {
+  Eigen::Vector3d initial_gripper_position(
+      initial_gripper_pose_.pose.position.x,
+      initial_gripper_pose_.pose.position.y,
+      initial_gripper_pose_.pose.position.z
+  );
+
+  // control_view_angle_ is the operator's "forward" direction in tm_base.
+  // It is set explicitly at each preset reset and accumulated only by
+  // position-control yaw — never derived from the rotation matrix, which
+  // would be corrupted by orientation control (wrist rotations via
+  // local-frame roll/pitch applied in applyOrientationDifference()).
+  const Eigen::Vector3d view_forward(
+      std::cos(control_view_angle_),
+      std::sin(control_view_angle_),
+      0.0
+  );
+
+  // Apply position differences in the view-aligned cylindrical frame:
+  //   - radius: translate along the view forward direction (not along the
+  //             position vector)
+  //   - height: translate along Z
+  //   - yaw:    rotate the resulting position around the Z axis
+  Eigen::Vector3d position_with_radius_height =
+      initial_gripper_position + scaled_diff.radius * view_forward;
+  position_with_radius_height.z() =
+      initial_gripper_position.z() + scaled_diff.height;
+  
+  // Clamp cylindrical radius (XY distance from robot base) and height.
+  //  The yaw rotation applied below preserves the XY radius, so clamping
+  //  before it is equivalent and avoids recomputing after rotation.
+  const double xy_radius = std::hypot(
+      position_with_radius_height.x(), position_with_radius_height.y()
+  );
+  if (xy_radius > 1e-9) {
+    const double clamped_xy_radius = std::clamp(
+        xy_radius, gripper_position_radius_min_, gripper_position_radius_max_
+    );
+    if (clamped_xy_radius != xy_radius) {
+      const double scale = clamped_xy_radius / xy_radius;
+      position_with_radius_height.x() *= scale;
+      position_with_radius_height.y() *= scale;
+    }
+  }
+  position_with_radius_height.z() = std::clamp(
+      position_with_radius_height.z(),
+      gripper_position_height_min_,
+      gripper_position_height_max_
+  );
+}
+
 void MotionControllerTeleoperation::calculateDesiredGripperOrientation() {
-  const RPY orientation_difference = this->getOrientationDifference();
-  const RPY scaled_orientation_difference = this->scaleOrientationDifference(orientation_difference);
-  this->applyOrientationDifference(scaled_orientation_difference);
+  const RPY orient_diff = this->getOrientationDifference();
+  const RPY scaled_diff = this->scaleOrientationDifference(orient_diff);
+  this->applyOrientationDifference(scaled_diff);
 }
 
 RPY MotionControllerTeleoperation::getOrientationDifference() {
-  RPY initial_left_controller_rpy;
-  initial_left_controller_rpy.convertFromPoseStamped(initial_left_controller_pose_);
-  RPY current_left_controller_rpy;
-  current_left_controller_rpy.convertFromPoseStamped(current_left_controller_pose_);
-
-  RPY orientation_difference = {
-      this->restrictAngleWithinPI(current_left_controller_rpy.roll - initial_left_controller_rpy.roll),
-      this->restrictAngleWithinPI(current_left_controller_rpy.pitch - initial_left_controller_rpy.pitch),
-      this->restrictAngleWithinPI(current_left_controller_rpy.yaw - initial_left_controller_rpy.yaw)
+  RPY init_rpy; init_rpy.convertFromPoseStamped(initial_left_controller_pose_);
+  RPY curr_rpy; curr_rpy.convertFromPoseStamped(current_left_controller_pose_);
+  RPY orient_diff = {
+      this->restrictAngleWithinPI(curr_rpy.roll - init_rpy.roll),
+      this->restrictAngleWithinPI(curr_rpy.pitch - init_rpy.pitch),
+      this->restrictAngleWithinPI(curr_rpy.yaw - init_rpy.yaw)
   };
-  return orientation_difference;
+  return orient_diff;
 }
 
-RPY MotionControllerTeleoperation::scaleOrientationDifference(const RPY& orientation_difference) {
-  RPY scaled_orientation_difference;
-  scaled_orientation_difference.roll = orientation_difference.roll * gripper_orientation_roll_scale_;
-  scaled_orientation_difference.pitch = orientation_difference.pitch * gripper_orientation_pitch_scale_;
-  scaled_orientation_difference.yaw = orientation_difference.yaw * gripper_orientation_yaw_scale_;
-  return scaled_orientation_difference;
+RPY MotionControllerTeleoperation::scaleOrientationDifference(const RPY& orient_diff) {
+  RPY scaled_diff;
+  scaled_diff.roll = orient_diff.roll * gripper_orientation_roll_scale_;
+  scaled_diff.pitch = orient_diff.pitch * gripper_orientation_pitch_scale_;
+  scaled_diff.yaw = orient_diff.yaw * gripper_orientation_yaw_scale_;
+  return scaled_diff;
 }
 
-void MotionControllerTeleoperation::applyOrientationDifference(const RPY& scaled_orientation_difference) {
+void MotionControllerTeleoperation::applyOrientationDifference(const RPY& scaled_diff) {
   Eigen::Vector3d initial_gripper_position(
       initial_gripper_pose_.pose.position.x,
       initial_gripper_pose_.pose.position.y,
@@ -655,19 +665,32 @@ void MotionControllerTeleoperation::applyOrientationDifference(const RPY& scaled
   Eigen::Matrix3d initial_gripper_rotation_matrix =
       initial_gripper_quaternion.toRotationMatrix();
 
-  const geometry_msgs::TransformStamped T_gripper_wrist =
-      tf2_listener_.lookupTransform<geometry_msgs::TransformStamped>(
-          "tm_wrist_2_link", "tm_gripper"
-      );
   const Eigen::Vector3d p_gripper_wrist(0.0, 0.0, -0.291);
   const Eigen::Vector3d wrist_position = initial_gripper_position +
       (initial_gripper_rotation_matrix * p_gripper_wrist);
 
-  Eigen::AngleAxisd yaw_rotation(scaled_orientation_difference.yaw, Eigen::Vector3d::UnitZ());  // global
-  Eigen::AngleAxisd pitch_rotation(scaled_orientation_difference.pitch, Eigen::Vector3d::UnitX());  // local
-  Eigen::AngleAxisd roll_rotation(-scaled_orientation_difference.roll, Eigen::Vector3d::UnitZ());  // local
+  const double clamped_yaw = std::clamp(
+      scaled_diff.yaw,
+      -gripper_orientation_yaw_limit_,
+      gripper_orientation_yaw_limit_
+  );
+  const double clamped_pitch = std::clamp(
+      scaled_diff.pitch,
+      -gripper_orientation_pitch_limit_,
+      gripper_orientation_pitch_limit_
+  );
+  const double clamped_roll = std::clamp(
+      scaled_diff.roll,
+      -gripper_orientation_roll_limit_,
+      gripper_orientation_roll_limit_
+  );
+
+  Eigen::AngleAxisd yaw_rotation(clamped_yaw, Eigen::Vector3d::UnitZ());  // global
+  Eigen::AngleAxisd pitch_rotation(clamped_pitch, Eigen::Vector3d::UnitX());  // local
+  Eigen::AngleAxisd roll_rotation(-clamped_roll, Eigen::Vector3d::UnitZ());  // local
   // = global_rotation * initial_quat * local_rotation
-  Eigen::Quaterniond desired_gripper_quaternion = yaw_rotation * initial_gripper_quaternion * pitch_rotation * roll_rotation;
+  Eigen::Quaterniond desired_gripper_quaternion = yaw_rotation
+      * initial_gripper_quaternion * pitch_rotation * roll_rotation;
   Eigen::Matrix3d desired_rotation_matrix = desired_gripper_quaternion.toRotationMatrix();
   Eigen::Vector3d desired_gripper_position = wrist_position -
       (desired_rotation_matrix * p_gripper_wrist);
