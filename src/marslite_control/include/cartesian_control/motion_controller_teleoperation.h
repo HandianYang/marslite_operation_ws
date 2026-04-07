@@ -60,6 +60,7 @@ class MotionControllerTeleoperation {
   inline void resetToFrontPose() {
     last_position_yaw_ = 0.0;
     control_view_angle_ = 0.0;
+    control_view_offset_ = use_sim_ ? 0.0 : M_PI / 2;
     this->teleoperateToPose(
         MotionControllerTeleoperation::generateInitialGripperPose(
             0.0, control_view_offset_, use_sim_
@@ -70,6 +71,7 @@ class MotionControllerTeleoperation {
   inline void resetToLeftPose() {
     last_position_yaw_ = 0.0;
     control_view_angle_ = M_PI / 2;
+    control_view_offset_ = use_sim_ ? 0.0 : M_PI / 2;
     this->teleoperateToPose(
         MotionControllerTeleoperation::generateInitialGripperPose(
             M_PI / 2, control_view_offset_, use_sim_
@@ -80,6 +82,7 @@ class MotionControllerTeleoperation {
   inline void resetToLeftFrontPose() {
     last_position_yaw_ = 0.0;
     control_view_angle_ = M_PI / 4;
+    control_view_offset_ = use_sim_ ? 0.0 : M_PI / 2;
     this->teleoperateToPose(
         MotionControllerTeleoperation::generateInitialGripperPose(
             M_PI / 4, control_view_offset_, use_sim_
@@ -90,6 +93,7 @@ class MotionControllerTeleoperation {
   inline void resetToRightPose() {
     last_position_yaw_ = 0.0;
     control_view_angle_ = -M_PI / 2;
+    control_view_offset_ = use_sim_ ? 0.0 : M_PI / 2;
     this->teleoperateToPose(
         MotionControllerTeleoperation::generateInitialGripperPose(
             -M_PI / 2, control_view_offset_, use_sim_
