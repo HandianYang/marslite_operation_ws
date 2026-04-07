@@ -586,43 +586,62 @@ Eigen::Vector3d MotionControllerTeleoperation::getPositionWithRadiusAndHeightApp
   // position-control yaw — never derived from the rotation matrix, which
   // would be corrupted by orientation control (wrist rotations via
   // local-frame roll/pitch applied in applyOrientationDifference()).
-  const Eigen::Vector3d view_forward(
+  const Eigen::Vector2d view_xy(
       std::cos(control_view_angle_),
-      std::sin(control_view_angle_),
-      0.0
+      std::sin(control_view_angle_)
+  );
+  const Eigen::Vector2d init_xy(
+      initial_gripper_position.x(),
+      initial_gripper_position.y()
   );
 
-  // Apply position differences in the view-aligned cylindrical frame:
-  //   - radius: translate along the view forward direction (not along the
-  //             position vector)
-  //   - height: translate along Z
-  //   - yaw:    rotate the resulting position around the Z axis
-  Eigen::Vector3d position_with_radius_height =
-      initial_gripper_position + scaled_diff.radius * view_forward;
-  position_with_radius_height.z() =
-      initial_gripper_position.z() + scaled_diff.height;
-  
-  // Clamp cylindrical radius (XY distance from robot base) and height.
-  //  The yaw rotation applied below preserves the XY radius, so clamping
-  //  before it is equivalent and avoids recomputing after rotation.
-  const double xy_radius = std::hypot(
-      position_with_radius_height.x(), position_with_radius_height.y()
-  );
-  if (xy_radius > 1e-9) {
-    const double clamped_xy_radius = std::clamp(
-        xy_radius, gripper_position_radius_min_, gripper_position_radius_max_
-    );
-    if (clamped_xy_radius != xy_radius) {
-      const double scale = clamped_xy_radius / xy_radius;
-      position_with_radius_height.x() *= scale;
-      position_with_radius_height.y() *= scale;
+  // Clamp the *scalar* radius increment along the view-forward line so that
+  // the resulting XY position lies within the allowed annulus
+  // [radius_min, radius_max]. Clamping the scalar (rather than radially
+  // projecting the resulting point toward the origin) preserves direction
+  // exactly: when the user holds radius- after hitting the inner bound, the
+  // position simply stops moving instead of sliding around the inner circle.
+  //
+  // |init_xy + r * view_xy|^2 = (a + r)^2 + b^2,
+  //   where a = init_xy . view_xy,  b^2 = |init_xy|^2 - a^2.
+  const double a  = init_xy.dot(view_xy);
+  const double b2 = std::max(0.0, init_xy.squaredNorm() - a * a);
+  double r = scaled_diff.radius;
+
+  // Outer bound: r in [-a - sqrt(R_max^2 - b^2), -a + sqrt(R_max^2 - b^2)].
+  const double R_max = gripper_position_radius_max_;
+  if (b2 < R_max * R_max) {
+    const double disc = std::sqrt(R_max * R_max - b2);
+    r = std::clamp(r, -a - disc, -a + disc);
+  } else {
+    // Line is entirely outside R_max — should not happen if init is valid.
+    r = 0.0;
+  }
+
+  // Inner bound: forbidden interval (-a - sqrt(R_min^2 - b^2),
+  // -a + sqrt(R_min^2 - b^2)). Stay on the side containing r = 0, which is
+  // the side whose sign matches sign(a) (because at r = 0 we have
+  // (a + r) = a, and the initial point is assumed valid, i.e. outside the
+  // forbidden disc).
+  const double R_min = gripper_position_radius_min_;
+  if (b2 < R_min * R_min) {
+    const double disc = std::sqrt(R_min * R_min - b2);
+    if (a >= 0.0) {
+      if (r < -a + disc) r = -a + disc;
+    } else {
+      if (r > -a - disc) r = -a - disc;
     }
   }
-  position_with_radius_height.z() = std::clamp(
-      position_with_radius_height.z(),
-      gripper_position_height_min_,
-      gripper_position_height_max_
+  // else: line never enters the inner forbidden disc; no inner clamp needed.
+
+  Eigen::Vector3d position_with_radius_height(
+      initial_gripper_position.x() + r * view_xy.x(),
+      initial_gripper_position.y() + r * view_xy.y(),
+      std::clamp(initial_gripper_position.z() + scaled_diff.height,
+                 gripper_position_height_min_,
+                 gripper_position_height_max_)
   );
+  return position_with_radius_height;
 }
 
 void MotionControllerTeleoperation::calculateDesiredGripperOrientation() {
