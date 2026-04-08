@@ -442,11 +442,39 @@ const bool MotionControllerTeleoperation::targetPoseIsReached(
 }
 
 void MotionControllerTeleoperation::initializeGripperPose() {
-  initial_gripper_pose_ = desired_gripper_pose_ = current_gripper_pose_;
-  // Accumulate yaw applied during the last position control session into
-  // control_view_angle_, then clear it so subsequent calls are no-ops.
-  control_view_angle_ = restrictAngleWithinPI(control_view_angle_ + last_position_yaw_);
+  // Fold the *actually achieved* yaw from the last position control session
+  // into control_view_angle_ — not the commanded scaled_diff.yaw. Because
+  // the safety button may be released before the arm finishes tracking, the
+  // commanded value generally overshoots the real gripper rotation, and
+  // using it would accumulate phantom rotation in the operator's forward
+  // direction.
+  //
+  // Compute R_delta = R_current * R_initial^T and extract its yaw. R_initial
+  // and R_current share the same orientation-control baseline (orientation
+  // control cannot run during a position session), so any pre-existing
+  // roll/pitch in the rotation matrix cancels out in the relative rotation
+  // — atan2 on R_delta recovers a clean Z-rotation angle regardless of what
+  // the absolute matrix looks like.
+  const Eigen::Quaterniond q_init(
+      initial_gripper_pose_.pose.orientation.w,
+      initial_gripper_pose_.pose.orientation.x,
+      initial_gripper_pose_.pose.orientation.y,
+      initial_gripper_pose_.pose.orientation.z
+  );
+  const Eigen::Quaterniond q_curr(
+      current_gripper_pose_.pose.orientation.w,
+      current_gripper_pose_.pose.orientation.x,
+      current_gripper_pose_.pose.orientation.y,
+      current_gripper_pose_.pose.orientation.z
+  );
+  const Eigen::Matrix3d R_delta =
+      (q_curr * q_init.inverse()).toRotationMatrix();
+  const double achieved_yaw = std::atan2(R_delta(1, 0), R_delta(0, 0));
+
+  control_view_angle_ = restrictAngleWithinPI(control_view_angle_ + achieved_yaw);
   last_position_yaw_ = 0.0;
+
+  initial_gripper_pose_ = desired_gripper_pose_ = current_gripper_pose_;
 }
 
 void MotionControllerTeleoperation::initializeLeftControllerPose() {
