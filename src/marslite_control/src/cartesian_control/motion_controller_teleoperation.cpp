@@ -14,14 +14,14 @@ MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHand
       is_orientation_change_enabled_(false),
       is_shoulder_position_calibrated_(false),
       control_view_angle_(0.0),
-      last_position_yaw_(0.0),
       gripper_position_radius_min_(0.10),
       gripper_position_radius_max_(0.65),
       gripper_position_height_min_(0.05),
       gripper_position_height_max_(0.90),
       gripper_orientation_roll_limit_(M_PI / 4),
       gripper_orientation_pitch_limit_(M_PI / 4),
-      gripper_orientation_yaw_limit_(M_PI / 4) {
+      gripper_orientation_yaw_limit_(M_PI / 4),
+      is_last_published_pose_initialized_(false) {
   this->parseParameters();
   this->initializePublishers();
   this->initializeSubscribers();
@@ -36,37 +36,6 @@ MotionControllerTeleoperation::MotionControllerTeleoperation(const ros::NodeHand
  *                  Public members                    *  
  ****************************************************** */
 
-void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseStamped& target_pose) {
-  is_ready_to_teleop_ = false; // Disable teleoperation during guiding phase
-
-  this->initializeGripperPose();
-  // target_frame_publisher_.publish(target_pose);
-  desired_gripper_pose_publisher_.publish(target_pose);
-  
-  ROS_INFO_STREAM("Guiding to initial gripper pose: \n"
-      << " - Position: (" 
-      << target_pose.pose.position.x << ", "
-      << target_pose.pose.position.y << ", "
-      << target_pose.pose.position.z << ")\n"
-      << " - Orientation: ("
-      << target_pose.pose.orientation.x << ", "
-      << target_pose.pose.orientation.y << ", "
-      << target_pose.pose.orientation.z << ", "
-      << target_pose.pose.orientation.w << ")"
-  );
-
-  // Perform teleoperation until the current gripper pose reaches the target pose
-  while (nh_.ok() && !this->targetPoseIsReached(target_pose)) {
-    ROS_INFO_STREAM_THROTTLE(5, "Waiting to reach the target pose...");
-    this->updateGripperPose();
-    loop_rate_.sleep();
-    ros::spinOnce();
-  }
-
-  ROS_INFO_STREAM("Reached the target pose.");
-  ROS_INFO_STREAM_ONCE("Remember to calibrate your shoulder position before teleoperation.");
-  is_ready_to_teleop_ = true;
-}
 
 geometry_msgs::PoseStamped MotionControllerTeleoperation::generateInitialGripperPose(
     const double& control_view_angle,
@@ -99,6 +68,92 @@ geometry_msgs::PoseStamped MotionControllerTeleoperation::generateInitialGripper
   initial_pose.pose.orientation = initial_pose_rpy.convertToQuaternion();
 
   return initial_pose;
+}
+
+void MotionControllerTeleoperation::resetToReadyPose() {
+  geometry_msgs::PoseStamped pose;
+  pose.header.frame_id = "tm_base";
+  pose.pose.position.x = 0.122;
+  pose.pose.position.y = 0.35;
+  pose.pose.position.z = 0.6;
+  pose.pose.orientation.x = 0.0;
+  pose.pose.orientation.y = 0.707;
+  pose.pose.orientation.z = 0.707;
+  pose.pose.orientation.w = 0.0;
+  this->teleoperateToPose(pose);
+
+  // NOTE: This must be set after teleoperateToPose()
+  control_view_angle_ = M_PI / 2;
+}
+
+void MotionControllerTeleoperation::resetToFrontPose() {
+  control_view_offset_ = use_sim_ ? 0.0 : M_PI / 2;
+  this->teleoperateToPose(
+      MotionControllerTeleoperation::generateInitialGripperPose(
+          0.0, control_view_offset_, use_sim_
+      )
+  );
+
+  // NOTE: This must be set after teleoperateToPose()
+  control_view_angle_ = 0.0;
+}
+
+void MotionControllerTeleoperation::resetToLeftPose() {
+  control_view_offset_ = use_sim_ ? 0.0 : M_PI / 2;
+  this->teleoperateToPose(
+      MotionControllerTeleoperation::generateInitialGripperPose(
+          M_PI / 2, control_view_offset_, use_sim_
+      )
+  );
+
+  // NOTE: This must be set after teleoperateToPose()
+  control_view_angle_ = M_PI / 2;
+}
+
+void MotionControllerTeleoperation::resetToRightPose() {
+  control_view_offset_ = use_sim_ ? 0.0 : M_PI / 2;
+  this->teleoperateToPose(
+      MotionControllerTeleoperation::generateInitialGripperPose(
+          -M_PI / 2, control_view_offset_, use_sim_
+      )
+  );
+
+  // NOTE: This must be set after teleoperateToPose()
+  control_view_angle_ = -M_PI / 2;
+}
+
+
+void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseStamped& target_pose) {
+  is_ready_to_teleop_ = false; // Disable teleoperation during guiding phase
+
+  this->initializeGripperPose();
+  // target_frame_publisher_.publish(target_pose);
+  desired_gripper_pose_publisher_.publish(target_pose);
+  
+  ROS_INFO_STREAM("Guiding to initial gripper pose: \n"
+      << " - Position: (" 
+      << target_pose.pose.position.x << ", "
+      << target_pose.pose.position.y << ", "
+      << target_pose.pose.position.z << ")\n"
+      << " - Orientation: ("
+      << target_pose.pose.orientation.x << ", "
+      << target_pose.pose.orientation.y << ", "
+      << target_pose.pose.orientation.z << ", "
+      << target_pose.pose.orientation.w << ")"
+  );
+
+  // Perform teleoperation until the current gripper pose reaches the target pose
+  while (nh_.ok() && !this->targetPoseIsReached(target_pose)) {
+    ROS_INFO_STREAM_THROTTLE(5, "Waiting to reach the target pose...");
+    this->updateGripperPose();
+    loop_rate_.sleep();
+    ros::spinOnce();
+  }
+  initial_gripper_pose_ = current_gripper_pose_;
+
+  ROS_INFO_STREAM("Reached the target pose.");
+  ROS_INFO_STREAM_ONCE("Remember to calibrate your shoulder position before teleoperation.");
+  is_ready_to_teleop_ = true;
 }
 
 
@@ -139,6 +194,7 @@ void MotionControllerTeleoperation::run() {
       this->publishGripperVelocityMarker();
       this->publishUserCommandVelocity();
       this->publishUserCommandVelocityMarker();
+      this->printCylindricalPose();
     } // end desired_gripper_pose_mutex_ scope
 
     this->publishMobilePlatformVelocity();
@@ -442,19 +498,8 @@ const bool MotionControllerTeleoperation::targetPoseIsReached(
 }
 
 void MotionControllerTeleoperation::initializeGripperPose() {
-  // Fold the *actually achieved* yaw from the last position control session
-  // into control_view_angle_ — not the commanded scaled_diff.yaw. Because
-  // the safety button may be released before the arm finishes tracking, the
-  // commanded value generally overshoots the real gripper rotation, and
-  // using it would accumulate phantom rotation in the operator's forward
-  // direction.
-  //
-  // Compute R_delta = R_current * R_initial^T and extract its yaw. R_initial
-  // and R_current share the same orientation-control baseline (orientation
-  // control cannot run during a position session), so any pre-existing
-  // roll/pitch in the rotation matrix cancels out in the relative rotation
-  // — atan2 on R_delta recovers a clean Z-rotation angle regardless of what
-  // the absolute matrix looks like.
+  // Obtain the actual yaw from the last position of the previous control
+  //  session.
   const Eigen::Quaterniond q_init(
       initial_gripper_pose_.pose.orientation.w,
       initial_gripper_pose_.pose.orientation.x,
@@ -470,15 +515,127 @@ void MotionControllerTeleoperation::initializeGripperPose() {
   const Eigen::Matrix3d R_delta =
       (q_curr * q_init.inverse()).toRotationMatrix();
   const double achieved_yaw = std::atan2(R_delta(1, 0), R_delta(0, 0));
-
+  // Accumulate the achieved yaw into control_view_angle_
   control_view_angle_ = restrictAngleWithinPI(control_view_angle_ + achieved_yaw);
-  last_position_yaw_ = 0.0;
-
-  initial_gripper_pose_ = desired_gripper_pose_ = current_gripper_pose_;
+  
+  initial_gripper_pose_ = desired_gripper_pose_
+      = last_published_pose_ = current_gripper_pose_;
 }
 
 void MotionControllerTeleoperation::initializeLeftControllerPose() {
   initial_left_controller_pose_ = current_left_controller_pose_;
+}
+
+void MotionControllerTeleoperation::printCylindricalPose() const {
+  const double gx = current_gripper_pose_.pose.position.x;
+  const double gy = current_gripper_pose_.pose.position.y;
+  const double gz = current_gripper_pose_.pose.position.z;
+
+  const Eigen::Vector2d gripper_xy(gx, gy);
+  const Eigen::Vector2d view_xy(
+      std::cos(control_view_angle_),
+      std::sin(control_view_angle_)
+  );
+  const double radius = gripper_xy.dot(view_xy);
+  const double view_deg = control_view_angle_ * 180.0 / M_PI;
+
+  ROS_INFO_STREAM_THROTTLE(1,
+      " radius=" << std::fixed << std::setprecision(3) << radius <<
+      " yaw=" << std::setprecision(1) << view_deg << "deg" <<
+      " height=" << std::setprecision(3) << gz
+  );
+}
+
+void MotionControllerTeleoperation::publishDesiredGripperPose() {
+  // Rate-limit and quaternion-sign-protect the pose before it reaches the
+  // fzi cartesian_motion_controller. Without this, session-boundary
+  // discontinuities excite the solver's internal velocity integrator (which
+  // only decays at 0.9x / step) and cause persistent drift or wrist rotation.
+
+  if (!is_last_published_pose_initialized_) {
+    last_published_pose_ = desired_gripper_pose_;
+    is_last_published_pose_initialized_ = true;
+    desired_gripper_pose_publisher_.publish(last_published_pose_);
+    return;
+  }
+
+  // --- Quaternion continuity ---
+  // Ensure desired quaternion is in the same hemisphere as the last published
+  // one. q and -q represent the same orientation, but the fzi PD controller
+  // computes error as R_target * R_current^-1, and KDL's axis-angle extraction
+  // can produce a near-pi rotation for a sign flip, exciting wrist joints.
+  Eigen::Quaterniond q_desired(
+      desired_gripper_pose_.pose.orientation.w,
+      desired_gripper_pose_.pose.orientation.x,
+      desired_gripper_pose_.pose.orientation.y,
+      desired_gripper_pose_.pose.orientation.z
+  );
+  const Eigen::Quaterniond q_prev(
+      last_published_pose_.pose.orientation.w,
+      last_published_pose_.pose.orientation.x,
+      last_published_pose_.pose.orientation.y,
+      last_published_pose_.pose.orientation.z
+  );
+  if (q_desired.dot(q_prev) < 0.0) {
+    q_desired.coeffs() = -q_desired.coeffs();
+  }
+
+  // --- Exponential smoothing ---
+  // published = prev + alpha * (desired - prev).
+  // Unlike a hard rate-limit (constant-speed crawl on stop), this gives
+  // exponential convergence: fast at first, then tapering — a natural
+  // deceleration feel. During normal operation, the proportional lag is
+  // (1-alpha) * per-tick-delta, which is negligible at alpha=0.7.
+  const Eigen::Vector3d p_desired(
+      desired_gripper_pose_.pose.position.x,
+      desired_gripper_pose_.pose.position.y,
+      desired_gripper_pose_.pose.position.z
+  );
+  const Eigen::Vector3d p_prev(
+      last_published_pose_.pose.position.x,
+      last_published_pose_.pose.position.y,
+      last_published_pose_.pose.position.z
+  );
+  Eigen::Vector3d p_smoothed =
+      p_prev + kPoseSmoothingAlpha * (p_desired - p_prev);
+
+  Eigen::Quaterniond q_smoothed =
+      q_prev.slerp(kPoseSmoothingAlpha, q_desired);
+  q_smoothed.normalize();
+
+  // --- Hard safety cap (belt-and-suspenders) ---
+  // Generous enough that normal teleop never triggers it. Only clips genuine
+  // runaways where the fzi solver's pre-loaded velocity causes the smoothed
+  // output to still move too fast (e.g. residual internal velocity adds to
+  // the new command in the same direction).
+  Eigen::Vector3d dp = p_smoothed - p_prev;
+  const double dp_norm = dp.norm();
+  if (dp_norm > kMaxPositionStepPerTick) {
+    dp *= kMaxPositionStepPerTick / dp_norm;
+    p_smoothed = p_prev + dp;
+  }
+
+  const double q_dot_abs = std::abs(q_smoothed.dot(q_prev));
+  const double q_angle = 2.0 * std::acos(std::min(1.0, q_dot_abs));
+  Eigen::Quaterniond q_publish = q_smoothed;
+  if (q_angle > kMaxOrientationStepPerTick && q_angle > 1e-9) {
+    const double t = kMaxOrientationStepPerTick / q_angle;
+    q_publish = q_prev.slerp(t, q_smoothed);
+    q_publish.normalize();
+  }
+  const Eigen::Vector3d p_publish = p_smoothed;
+
+  // --- Build and publish ---
+  last_published_pose_.header = desired_gripper_pose_.header;
+  last_published_pose_.pose.position.x = p_publish.x();
+  last_published_pose_.pose.position.y = p_publish.y();
+  last_published_pose_.pose.position.z = p_publish.z();
+  last_published_pose_.pose.orientation.x = q_publish.x();
+  last_published_pose_.pose.orientation.y = q_publish.y();
+  last_published_pose_.pose.orientation.z = q_publish.z();
+  last_published_pose_.pose.orientation.w = q_publish.w();
+
+  desired_gripper_pose_publisher_.publish(last_published_pose_);
 }
 
 void MotionControllerTeleoperation::updateGripperPose() {
@@ -488,20 +645,6 @@ void MotionControllerTeleoperation::updateGripperPose() {
       target_frame, source_frame
   );
   current_gripper_pose_publisher_.publish(current_gripper_pose_);
-
-  // Calculate the correct origin of the cylindrical coordinates
-  RPY current_gripper_rpy;
-  current_gripper_rpy.convertFromPoseStamped(current_gripper_pose_);
-
-  // NOTE: The system assumes that the X axis of `vr_origin` and `tm_base` are
-  //  both pointing forward, and the yaw rotation of the gripper is around the
-  //  Z axis. If the actual setup is different, the calculation of
-  //  `elbow_position_` may need to be adjusted accordingly.
-  elbow_position_ = shoulder_position_;
-  double elbow_position_offset = current_gripper_rpy.yaw * 180 / M_PI / 1000;  // +100 deg for -10cm
-  if (std::abs(elbow_position_offset) >= 0.1) // [m]
-    elbow_position_offset = elbow_position_offset / std::abs(elbow_position_offset) * 0.1;
-  elbow_position_.x -= elbow_position_offset;
 }
 
 void MotionControllerTeleoperation::updateGripperVelocity() {
@@ -531,9 +674,9 @@ void MotionControllerTeleoperation::calculateDesiredGripperPosition() {
 
 CylindricalPoint MotionControllerTeleoperation::getCylindricalPositionDifference() {
   geometry_msgs::Point init_hand_pos;
-  init_hand_pos.x = initial_left_controller_pose_.pose.position.x - elbow_position_.x;
-  init_hand_pos.y = initial_left_controller_pose_.pose.position.y - elbow_position_.y;
-  init_hand_pos.z = initial_left_controller_pose_.pose.position.z - elbow_position_.z;
+  init_hand_pos.x = initial_left_controller_pose_.pose.position.x - shoulder_position_.x;
+  init_hand_pos.y = initial_left_controller_pose_.pose.position.y - shoulder_position_.y;
+  init_hand_pos.z = initial_left_controller_pose_.pose.position.z - shoulder_position_.z;
   const CylindricalPoint init_hand_cpos = {
       std::hypot(init_hand_pos.x, init_hand_pos.y),
       std::atan2(init_hand_pos.y, init_hand_pos.x),
@@ -541,9 +684,9 @@ CylindricalPoint MotionControllerTeleoperation::getCylindricalPositionDifference
   };
 
   geometry_msgs::Point curr_hand_pos;
-  curr_hand_pos.x = current_left_controller_pose_.pose.position.x - elbow_position_.x;
-  curr_hand_pos.y = current_left_controller_pose_.pose.position.y - elbow_position_.y;
-  curr_hand_pos.z = current_left_controller_pose_.pose.position.z - elbow_position_.z;
+  curr_hand_pos.x = current_left_controller_pose_.pose.position.x - shoulder_position_.x;
+  curr_hand_pos.y = current_left_controller_pose_.pose.position.y - shoulder_position_.y;
+  curr_hand_pos.z = current_left_controller_pose_.pose.position.z - shoulder_position_.z;
   const CylindricalPoint curr_hand_cpos = {
       std::hypot(curr_hand_pos.x, curr_hand_pos.y),
       std::atan2(curr_hand_pos.y, curr_hand_pos.x),
@@ -571,11 +714,6 @@ CylindricalPoint MotionControllerTeleoperation::scaleCylindricalPositionDifferen
 
 void MotionControllerTeleoperation::applyCylindricalPositionDifference(
     const CylindricalPoint& scaled_diff) {
-  // Track the net yaw applied in this position control session so that
-  // initializeGripperPose() can fold it into control_view_angle_ when the
-  // safety button is released (session ends).
-  last_position_yaw_ = scaled_diff.yaw;
-
   // Calculate desired_gripper_position
   Eigen::Vector3d position_with_radius_height =
       this->getPositionWithRadiusAndHeightApplied(scaled_diff);
@@ -589,7 +727,8 @@ void MotionControllerTeleoperation::applyCylindricalPositionDifference(
       initial_gripper_pose_.pose.orientation.y,
       initial_gripper_pose_.pose.orientation.z
   );
-  Eigen::Quaterniond desired_gripper_quaternion = yaw_rotation * initial_gripper_quaternion;
+  Eigen::Quaterniond desired_gripper_quaternion
+      = yaw_rotation * initial_gripper_quaternion;
   
   // Apply changes to the output
   desired_gripper_pose_.pose.position.x = desired_gripper_position.x();
@@ -603,71 +742,40 @@ void MotionControllerTeleoperation::applyCylindricalPositionDifference(
 
 Eigen::Vector3d MotionControllerTeleoperation::getPositionWithRadiusAndHeightApplied(
     const CylindricalPoint& scaled_diff) {
-  Eigen::Vector3d initial_gripper_position(
+  const Eigen::Vector3d initial_gripper_position(
       initial_gripper_pose_.pose.position.x,
       initial_gripper_pose_.pose.position.y,
       initial_gripper_pose_.pose.position.z
   );
 
-  // control_view_angle_ is the operator's "forward" direction in tm_base.
-  // It is set explicitly at each preset reset and accumulated only by
-  // position-control yaw — never derived from the rotation matrix, which
-  // would be corrupted by orientation control (wrist rotations via
-  // local-frame roll/pitch applied in applyOrientationDifference()).
-  const Eigen::Vector2d view_xy(
-      std::cos(control_view_angle_),
-      std::sin(control_view_angle_)
-  );
+  // vector that points to initial_gripper_pose_ without considering z axis
   const Eigen::Vector2d init_xy(
       initial_gripper_position.x(),
       initial_gripper_position.y()
   );
+  // unit vector with angle `control_view_angle_`
+  const Eigen::Vector2d view_xy(
+      std::cos(control_view_angle_),
+      std::sin(control_view_angle_)
+  );
 
-  // Clamp the *scalar* radius increment along the view-forward line so that
-  // the resulting XY position lies within the allowed annulus
-  // [radius_min, radius_max]. Clamping the scalar (rather than radially
-  // projecting the resulting point toward the origin) preserves direction
-  // exactly: when the user holds radius- after hitting the inner bound, the
-  // position simply stops moving instead of sliding around the inner circle.
-  //
-  // |init_xy + r * view_xy|^2 = (a + r)^2 + b^2,
-  //   where a = init_xy . view_xy,  b^2 = |init_xy|^2 - a^2.
-  const double a  = init_xy.dot(view_xy);
-  const double b2 = std::max(0.0, init_xy.squaredNorm() - a * a);
-  double r = scaled_diff.radius;
-
-  // Outer bound: r in [-a - sqrt(R_max^2 - b^2), -a + sqrt(R_max^2 - b^2)].
-  const double R_max = gripper_position_radius_max_;
-  if (b2 < R_max * R_max) {
-    const double disc = std::sqrt(R_max * R_max - b2);
-    r = std::clamp(r, -a - disc, -a + disc);
-  } else {
-    // Line is entirely outside R_max — should not happen if init is valid.
-    r = 0.0;
-  }
-
-  // Inner bound: forbidden interval (-a - sqrt(R_min^2 - b^2),
-  // -a + sqrt(R_min^2 - b^2)). Stay on the side containing r = 0, which is
-  // the side whose sign matches sign(a) (because at r = 0 we have
-  // (a + r) = a, and the initial point is assumed valid, i.e. outside the
-  // forbidden disc).
-  const double R_min = gripper_position_radius_min_;
-  if (b2 < R_min * R_min) {
-    const double disc = std::sqrt(R_min * R_min - b2);
-    if (a >= 0.0) {
-      if (r < -a + disc) r = -a + disc;
-    } else {
-      if (r > -a - disc) r = -a - disc;
-    }
-  }
-  // else: line never enters the inner forbidden disc; no inner clamp needed.
+  // Calculate and clamp radius
+  const double initial_radius  = init_xy.dot(view_xy);
+  const double clamped_radius = std::clamp(
+      initial_radius + scaled_diff.radius,
+      gripper_position_radius_min_,
+      gripper_position_radius_max_) - initial_radius;
+  // Calculate and clamp height
+  const double clamped_height = std::clamp(
+      initial_gripper_position.z() + scaled_diff.height,
+      gripper_position_height_min_,
+      gripper_position_height_max_
+  );
 
   Eigen::Vector3d position_with_radius_height(
-      initial_gripper_position.x() + r * view_xy.x(),
-      initial_gripper_position.y() + r * view_xy.y(),
-      std::clamp(initial_gripper_position.z() + scaled_diff.height,
-                 gripper_position_height_min_,
-                 gripper_position_height_max_)
+      initial_gripper_position.x() + clamped_radius * view_xy.x(),
+      initial_gripper_position.y() + clamped_radius * view_xy.y(),
+      clamped_height
   );
   return position_with_radius_height;
 }
@@ -712,7 +820,7 @@ void MotionControllerTeleoperation::applyOrientationDifference(const RPY& scaled
   Eigen::Matrix3d initial_gripper_rotation_matrix =
       initial_gripper_quaternion.toRotationMatrix();
 
-  const Eigen::Vector3d p_gripper_wrist(0.0, 0.0, -0.291);
+  const Eigen::Vector3d p_gripper_wrist(0.0, 0.0, -0.291);  // TM5-700 spec.
   const Eigen::Vector3d wrist_position = initial_gripper_position +
       (initial_gripper_rotation_matrix * p_gripper_wrist);
 
