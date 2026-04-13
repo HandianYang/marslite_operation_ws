@@ -10,13 +10,16 @@
  ****************************************************** */
 
 IntentInference::IntentInference(const double& transition_probability) :
-    robot_state_(RobotState::STANDBY),
     transition_probability_(transition_probability),
+    confidence_(0.0),
+    use_sim_(false),
     is_inference_activated_(false),
-    is_reject_cooldown_timer_started_(false),
+    is_positional_safety_button_pressed_(false),
     is_assist_dwell_timer_started_(false),
+    is_reject_cooldown_timer_started_(false),
     is_reset_pose_signal_transferred_(false),
-    is_reset_pose_completed_(false) {
+    is_reset_pose_completed_(false),
+    robot_state_(RobotState::STANDBY) {
   belief_ = {};
   position_wrt_odom_ = {};
   position_wrt_tm_base_ = {};
@@ -27,17 +30,35 @@ IntentInference::IntentInference(const double& transition_probability) :
  ****************************************************** */
 
 void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArray& recorded_objects) {
-  recorded_objects_ = recorded_objects;
+  recorded_objects_ = {};
   belief_ = {};
   position_wrt_odom_ = {};
   position_wrt_tm_base_ = {};
+
+  // First pass: transform and filter out objects beyond the TM5-700 reach.
+  // Unreachable items would otherwise dilute the belief mass of reachable ones.
   for (const detection_msgs::DetectedObject& obj : recorded_objects.objects) {
-    belief_[obj] = 1.0 / recorded_objects.objects.size();
     geometry_msgs::PointStamped centroid;
     centroid.header.frame_id = obj.frame;
     centroid.point = obj.centroid;
+    const geometry_msgs::PointStamped p_tm_base = tf2_listener_.transformData(centroid, "tm_base");
+    const double planar_reach = std::hypot(p_tm_base.point.x, p_tm_base.point.y);
+    // if (planar_reach > kMaxReachableRadius) {
+    //   ROS_WARN_STREAM("IntentInference: dropping unreachable object '" << obj.label
+    //       << "' (planar distance " << planar_reach << " m > " << kMaxReachableRadius << " m)");
+    //   continue;
+    // }
+    recorded_objects_.objects.push_back(obj);
     position_wrt_odom_[obj] = tf2_listener_.transformData(centroid, "odom");
-    position_wrt_tm_base_[obj] = tf2_listener_.transformData(centroid, "tm_base");
+    position_wrt_tm_base_[obj] = p_tm_base;
+  }
+
+  // Second pass: initialize belief uniformly over the surviving objects.
+  const size_t n = recorded_objects_.objects.size();
+  if (n > 0) {
+    for (const detection_msgs::DetectedObject& obj : recorded_objects_.objects) {
+      belief_[obj] = 1.0 / static_cast<double>(n);
+    }
   }
 }
 
@@ -273,10 +294,16 @@ void IntentInference::updateBelief() {
     // Markov transition update
     const double likelihood = direction_likelihood * proximity_likelihood;
     double sum_transitions = 0.0;
+    const size_t n = belief_.size();
     for (const auto& [object, probability] : belief_) {
-      const double transition = (recorded_object == object)
-          ? 1.0 - transition_probability_
-          : transition_probability_ / (belief_.size() - 1);
+      double transition;
+      if (n == 1) {
+        transition = 1.0;
+      } else if (recorded_object == object) {
+        transition = 1.0 - transition_probability_;
+      } else {
+        transition = transition_probability_ / static_cast<double>(n - 1);
+      }
       sum_transitions += transition * probability;
     }
     new_belief[recorded_object] = likelihood * sum_transitions;
@@ -319,37 +346,30 @@ void IntentInference::removeTargetFromRecordedObjects() {
 const bool IntentInference::isNearTarget() const {
   const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
   if (target_direction == geometry_msgs::Vector3())  return false;
-  const double target_distance_xy = std::sqrt(
-      target_direction.x * target_direction.x +
-      target_direction.y * target_direction.y
-      // Ignore z direction, and let user decide the height
-  );
-  return target_distance_xy < kNearDistanceThreshold && target_direction.z < kZDistanceThreshold;
+  const double target_distance_xy = std::hypot(target_direction.x, target_direction.y);
+  return target_distance_xy < kNearDistanceThreshold
+      && std::abs(target_direction.z) < kZDistanceThreshold;
 }
 
 const bool IntentInference::isTargetReached() const {
   const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
   if (target_direction == geometry_msgs::Vector3())  return false;
-  const double target_distance_xy = std::sqrt(
-      target_direction.x * target_direction.x +
-      target_direction.y * target_direction.y
-      // Ignore z direction, and let user decide the height
-  );
-  return target_distance_xy < kPositionTolerance && target_direction.z < kZDistanceThreshold;
+  const double target_distance_xy = std::hypot(target_direction.x, target_direction.y);
+  return target_distance_xy < kPositionTolerance
+      && std::abs(target_direction.z) < kZDistanceThreshold;
 }
 
 const bool IntentInference::isInPickArea() const {
-  for (const auto& [object, prob] : belief_) {
-    const double dx = position_wrt_tm_base_.at(object).point.x - gripper_position_.x;
-    const double dy = position_wrt_tm_base_.at(object).point.y - gripper_position_.y;
-    const double dz = position_wrt_tm_base_.at(object).point.z - gripper_position_.z;
-    const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
-
-    if (distance < kPickAreaDistanceThreshold) {
-      return true;
-    }
-  }
-  return false;
+  // Only the current target (arg-max of belief) should gate the assist — any
+  // other object being close is irrelevant and could cause false activations.
+  if (belief_.empty())  return false;
+  const detection_msgs::DetectedObject target = this->getTargetObject();
+  const auto it = position_wrt_tm_base_.find(target);
+  if (it == position_wrt_tm_base_.end())  return false;
+  const double dx = it->second.point.x - gripper_position_.x;
+  const double dy = it->second.point.y - gripper_position_.y;
+  const double dz = it->second.point.z - gripper_position_.z;
+  return std::sqrt(dx * dx + dy * dy + dz * dz) < kPickAreaDistanceThreshold;
 }
 
 const bool IntentInference::isTowardTarget() const {
@@ -432,18 +452,30 @@ void IntentInference::normalizeBelief() {
 }
 
 void IntentInference::calculateConfidence() {
-  std::vector<double> probs;
-  for (const auto& [_, prob] : belief_) probs.push_back(prob);
-  std::sort(probs.begin(), probs.end(), std::greater<double>());
-
-  if (probs.size() >= 2) {
-    // confidence -> highest probability / second highest probability
-    confidence_ = probs[0] / probs[1];
-  } else if (probs.size() == 1) {
-    // only one object -> full confidence
-    confidence_ = DBL_MAX;
-  } else {
-    // no objects -> no confidence
+  // Normalized entropy: confidence = 1 - H / log(N).
+  // - Uniform distribution -> 0
+  // - Fully concentrated   -> 1
+  // - N == 1               -> 1 (single candidate is trivially certain)
+  // Bounded in [0, 1] for any N, so the threshold is meaningful regardless
+  // of how many candidates remain on the shelf. The hard gate against
+  // spurious activation is still provided by isTowardTarget().
+  const size_t n = belief_.size();
+  if (n == 0) {
     confidence_ = 0.0;
+    return;
   }
+  if (n == 1) {
+    confidence_ = 1.0;
+    return;
+  }
+  double entropy = 0.0;
+  for (const auto& [_, prob] : belief_) {
+    if (prob > 1e-12) {
+      entropy -= prob * std::log(prob);
+    }
+  }
+  const double max_entropy = std::log(static_cast<double>(n));
+  confidence_ = 1.0 - entropy / max_entropy;
+  if (confidence_ < 0.0) confidence_ = 0.0;
+  if (confidence_ > 1.0) confidence_ = 1.0;
 }

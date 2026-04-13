@@ -66,7 +66,17 @@ class IntentInference {
 
   static inline constexpr double kDirectionLikelihoodParameter = 4.0;
   static inline constexpr double kProximityLikelihoodParameter = 3.0;
-  static inline constexpr double kAssistanceActivatedConfidenceThreshold = 2;
+  // Normalized-entropy confidence: confidence = 1 - H / log(N), where
+  // H = -sum(p * log p). Bounded in [0, 1] regardless of N:
+  //   - uniform distribution -> 0
+  //   - fully concentrated   -> 1
+  //   - N == 1               -> 1 (single candidate = certain)
+  // This avoids the upper-bound problem of top1*N when N is small.
+  static inline constexpr double kAssistanceActivatedConfidenceThreshold = 0.45;
+  // [m] TM5-700 effective planar reach. Objects beyond this (measured from
+  // tm_base in the XY plane) are excluded from the belief pool so that
+  // unreachable items cannot dilute the probability of reachable targets.
+  // static inline constexpr double kMaxReachableRadius = 0.9;
   // [m] Used for isNearTarget() and isTargetReached()
   static inline constexpr double kZDistanceThreshold = 0.15;
   // [m] Ready-to-pick zone

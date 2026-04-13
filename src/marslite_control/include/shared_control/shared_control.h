@@ -18,14 +18,26 @@
 class SharedControl {
  public:
   static inline constexpr double kDistanceTolerance = 1e-3;
-  // normally >= 1.0 to enhance attractive force
-  static inline constexpr double kAttractiveForceGain = 2.0;
-  // "weak" means weak repulsive force (less restriction)
+  // Lateral (u_phi) gain bounds. Smoothly interpolated by horizontal distance
+  // to target: tighter (closer to kRepulsiveForceStrongGain) as the gripper
+  // approaches the target so accidental sideways drift is suppressed.
   static inline constexpr double kRepulsiveForceWeakGain = 0.8;
-  // "strong" means strong repulsive force (more restriction)
   static inline constexpr double kRepulsiveForceStrongGain = 0.2;
-  // [m] junction between "strong" gain and "weak" gain
+  // [m] horizontal distance at which the lateral suppression reaches its
+  // looser end (kRepulsiveForceWeakGain).
   static inline constexpr double kRepulsiveForceJunctionDistance = 0.3;
+  // [m] horizontal distance beyond which the attractive lead is zero.
+  // Below this, the lead ramps up linearly toward the full gain.
+  static inline constexpr double kAttractMaxDistance = 0.40;
+  // [0,1] Position-level attractive gain. Each tick, the blended command is
+  // pulled toward the target by this fraction of the *remaining* horizontal
+  // distance (times a distance ramp). Unlike a per-tick velocity bias, this
+  // persists every tick regardless of how fast the arm catches up, so the
+  // closing speed is not capped by the arm's tracking bandwidth.
+  // Tune range: 0.10 (gentle) .. 0.40 (aggressive).
+  static inline constexpr double kAttractGainHorizontal = 0.8;
+  // [0,1] Same idea, applied to the vertical error toward the target.
+  static inline constexpr double kAttractGainVertical = 0.20;
 
   explicit SharedControl(const ros::NodeHandle& nh = ros::NodeHandle());
 

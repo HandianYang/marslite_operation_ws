@@ -200,7 +200,10 @@ geometry_msgs::PoseStamped SharedControl::getBlendedPose() {
 }
 
 geometry_msgs::Point SharedControl::getBlendedPosition() {
-  /// TODO: Refine the code
+  // Arbitration frame: target-centered cylindrical basis (parallel to
+  // ground). u_r points horizontally from the current gripper toward the
+  // target; u_phi is the lateral axis; u_z is world up. This is the natural
+  // frame for funneling the gripper into the target.
   const Eigen::Vector3d user_command_position(
       user_desired_gripper_pose_.pose.position.x,
       user_desired_gripper_pose_.pose.position.y,
@@ -214,38 +217,60 @@ geometry_msgs::Point SharedControl::getBlendedPosition() {
   const geometry_msgs::Point tp = intent_inference_.getTargetPosition();
   const Eigen::Vector3d target_position(tp.x, tp.y, tp.z);
 
-  const Eigen::Vector3d user_desired_direction = user_command_position - gripper_position;
-  Eigen::Vector3d target_direction = target_position - gripper_position;
-  target_direction.z() = 0; // to make `u_r` and `u_phi` always parallel to the ground
-  const double target_distance = target_direction.norm();
-  if (target_distance < kDistanceTolerance)
+  const Eigen::Vector3d user_delta = user_command_position - gripper_position;
+  const Eigen::Vector3d to_target_xy(
+      target_position.x() - gripper_position.x(),
+      target_position.y() - gripper_position.y(),
+      0.0
+  );
+  const double d_xy = to_target_xy.norm();
+  if (d_xy < kDistanceTolerance) {
     return user_desired_gripper_pose_.pose.position;
-  
-  /// 3 axes in unit vector
-  Eigen::Vector3d u_r = target_direction.normalized();
-  Eigen::Vector3d u_z(0, 0, 1);
-  Eigen::Vector3d u_phi = u_z.cross(u_r);
+  }
 
-  /// user command's projection to 3 axes 
-  const double v_r = user_desired_direction.dot(u_r);
-  const double v_z = user_desired_direction.dot(u_z);
-  const double v_phi = user_desired_direction.dot(u_phi);
-  
-  /// gains
-  // Set k_r >= 1.0 to enhance the attractive force, and set it to 1.0 
-  //  for retreat movements (no interference)
-  const double k_r = (v_r >= 0) ? kAttractiveForceGain : 1.0;
-  // No interference (a.k.a. let user decide)
-  const double k_z = 1.0;
-  // Set k_phi < 1.0 to restrict lateral movements
-  const double k_phi = (target_distance > kRepulsiveForceJunctionDistance) ?
-      kRepulsiveForceWeakGain : kRepulsiveForceStrongGain;
+  const Eigen::Vector3d u_r = to_target_xy / d_xy;
+  const Eigen::Vector3d u_z(0.0, 0.0, 1.0);
+  const Eigen::Vector3d u_phi = u_z.cross(u_r);
 
-  const Eigen::Vector3d blended_displacement = (k_r * v_r) * u_r + 
-      (k_z * v_z) * u_z + 
-      (k_phi * v_phi) * u_phi;
-  const Eigen::Vector3d blended_gripper_position = gripper_position + blended_displacement;
-  
+  // Project the user's delta onto the basis.
+  const double v_r   = user_delta.dot(u_r);
+  const double v_phi = user_delta.dot(u_phi);
+  const double v_z   = user_delta.dot(u_z);
+
+  // Lateral suppression: smoothly interpolate between strong (close) and
+  // weak (far) using horizontal distance to the target. Avoids the abrupt
+  // step-change of the previous two-bucket version.
+  const double t_lat = std::clamp(d_xy / kRepulsiveForceJunctionDistance, 0.0, 1.0);
+  const double k_phi = kRepulsiveForceStrongGain
+      + (kRepulsiveForceWeakGain - kRepulsiveForceStrongGain) * t_lat;
+
+  // User motion is passed through on the radial/vertical axes (the teleop
+  // side already handles its own scaling — no second amplification here).
+  // Only the lateral axis is shaped by the repulsive gain.
+  const Eigen::Vector3d shaped_user_delta =
+      v_r * u_r + (k_phi * v_phi) * u_phi + v_z * u_z;
+
+  // Position-level attractive lead: pull the blended command a fraction of
+  // the *remaining* error toward the target. Two important properties:
+  //   1. The lead is proportional to distance, so it is large when far and
+  //      vanishes as the gripper arrives (no overshoot, no manual shutoff).
+  //   2. It is a position offset, not a per-tick velocity increment. Each
+  //      tick the command is still "alpha * d ahead" of the current gripper,
+  //      so the arm sees a sustained lead regardless of how slowly it
+  //      tracks. The closing speed is therefore set by the combination of
+  //      alpha and the arm's own bandwidth, not clipped to bandwidth * step.
+  const double t_attract = 1.0 - std::clamp(d_xy / kAttractMaxDistance, 0.0, 1.0);
+  const double alpha_xy = kAttractGainHorizontal * t_attract;
+  const double alpha_z  = kAttractGainVertical   * t_attract;
+  const double dz = target_position.z() - gripper_position.z();
+
+  const Eigen::Vector3d attract_lead =
+      (alpha_xy * d_xy) * u_r +
+      (alpha_z  * dz)   * u_z;
+
+  const Eigen::Vector3d blended_gripper_position =
+      gripper_position + shaped_user_delta + attract_lead;
+
   geometry_msgs::Point blended_position;
   blended_position.x = blended_gripper_position.x();
   blended_position.y = blended_gripper_position.y();
@@ -254,25 +279,21 @@ geometry_msgs::Point SharedControl::getBlendedPosition() {
 }
 
 geometry_msgs::Quaternion SharedControl::getBlendedOrientation() {
-  /// TODO: Modify this function
-  RPY user_rpy; 
-  user_rpy.convertFromQuaternion(user_desired_gripper_pose_.pose.orientation);
-
-  RPY target_rpy;
-  target_rpy.roll = M_PI / 2;
-  target_rpy.pitch = 0;
-  target_rpy.yaw = user_rpy.yaw;
-  tf2::Quaternion q_target = target_rpy.convertToTF2Quaternion();
-  tf2::Quaternion q_user;
-  tf2::fromMsg(user_desired_gripper_pose_.pose.orientation, q_user);
-
-  const double rot_gain = 0.1;
-  tf2::Quaternion q_final = q_user.slerp(q_target, rot_gain);
-  q_final.normalize();
-
-  geometry_msgs::Quaternion blended_orientation;
-  blended_orientation = tf2::toMsg(q_final);
-  return blended_orientation;
+  // Orientation is intentionally passed through unmodified during arbitration.
+  //
+  // Rationale (consistency with the teleop side):
+  //   - In motion_controller_teleoperation, position control only affects
+  //     cylindrical radius/yaw/height, and the operator retains full
+  //     authority over roll/pitch via a separate orientation-control button.
+  //   - Arbitration should preserve the same division of responsibility:
+  //     the assist helps with position funneling (an imprecise DoF given
+  //     the cylindrical mapping), but the operator keeps final say over the
+  //     approach angle — essential for reaching shelf items at non-horizontal
+  //     orientations, where forcing roll=pi/2, pitch=0 would be a regression.
+  //   - "Face-the-target" yaw alignment can be reintroduced here if needed,
+  //     but it must account for the structural control_view_offset_ used on
+  //     the teleop side; leaving it to the operator avoids that coupling.
+  return user_desired_gripper_pose_.pose.orientation;
 }
 
 void SharedControl::publishIntentBeliefVisualization() {
