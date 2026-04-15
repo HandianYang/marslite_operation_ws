@@ -9,8 +9,27 @@
  *                  Constructors                      *  
  ****************************************************** */
 
-IntentInference::IntentInference(const double& transition_probability) :
-    transition_probability_(transition_probability),
+IntentInference::IntentInference() :
+    // Defaults (overridden by parseParameters if YAML is loaded)
+    transition_probability_(0.1),
+    direction_likelihood_parameter_(4.0),
+    proximity_likelihood_parameter_(3.0),
+    confidence_threshold_(0.45),
+    z_distance_threshold_(0.15),
+    near_distance_threshold_(0.03),
+    position_tolerance_(5e-3),
+    pick_area_distance_threshold_(0.40),
+    user_command_speed_tolerance_(0.15),
+    toward_target_similarity_(0.5),
+    away_target_similarity_(-0.707),
+    assist_dwell_time_(0.3),
+    reject_cooldown_time_(1.0),
+    staging_pose_a_x_(0.30), staging_pose_a_y_(0.00), staging_pose_a_z_(0.35),
+    staging_pose_a_qx_(0.7071068), staging_pose_a_qy_(0.0), staging_pose_a_qz_(0.0), staging_pose_a_qw_(0.7071068),
+    staging_pose_b_x_(0.122), staging_pose_b_y_(0.35), staging_pose_b_z_(0.60),
+    staging_pose_b_qx_(0.5), staging_pose_b_qy_(-0.5), staging_pose_b_qz_(0.5), staging_pose_b_qw_(0.5),
+    layout_threshold_(0.15),
+    staging_pose_reached_distance_(0.05),
     confidence_(0.0),
     use_sim_(false),
     is_inference_activated_(false),
@@ -19,10 +38,44 @@ IntentInference::IntentInference(const double& transition_probability) :
     is_reject_cooldown_timer_started_(false),
     is_reset_pose_signal_transferred_(false),
     is_reset_pose_completed_(false),
-    robot_state_(RobotState::STANDBY) {
+    robot_state_(RobotState::STANDBY),
+    grasp_completed_(false),
+    return_in_progress_(false) {
   belief_ = {};
   position_wrt_odom_ = {};
   position_wrt_tm_base_ = {};
+}
+
+void IntentInference::parseParameters(const ros::NodeHandle& nh) {
+  nh.getParam("intent_inference/transition_probability",     transition_probability_);
+  nh.getParam("intent_inference/direction_likelihood_parameter", direction_likelihood_parameter_);
+  nh.getParam("intent_inference/proximity_likelihood_parameter", proximity_likelihood_parameter_);
+  nh.getParam("intent_inference/confidence_threshold",       confidence_threshold_);
+  nh.getParam("intent_inference/z_distance_threshold",       z_distance_threshold_);
+  nh.getParam("intent_inference/near_distance_threshold",    near_distance_threshold_);
+  nh.getParam("intent_inference/position_tolerance",         position_tolerance_);
+  nh.getParam("intent_inference/pick_area_distance_threshold", pick_area_distance_threshold_);
+  nh.getParam("intent_inference/user_command_speed_tolerance", user_command_speed_tolerance_);
+  nh.getParam("intent_inference/toward_target_similarity",   toward_target_similarity_);
+  nh.getParam("intent_inference/away_target_similarity",     away_target_similarity_);
+  nh.getParam("intent_inference/assist_dwell_time",          assist_dwell_time_);
+  nh.getParam("intent_inference/reject_cooldown_time",       reject_cooldown_time_);
+  nh.getParam("intent_inference/staging_pose_front/position/x",      staging_pose_a_x_);
+  nh.getParam("intent_inference/staging_pose_front/position/y",      staging_pose_a_y_);
+  nh.getParam("intent_inference/staging_pose_front/position/z",      staging_pose_a_z_);
+  nh.getParam("intent_inference/staging_pose_front/orientation/x",   staging_pose_a_qx_);
+  nh.getParam("intent_inference/staging_pose_front/orientation/y",   staging_pose_a_qy_);
+  nh.getParam("intent_inference/staging_pose_front/orientation/z",   staging_pose_a_qz_);
+  nh.getParam("intent_inference/staging_pose_front/orientation/w",   staging_pose_a_qw_);
+  nh.getParam("intent_inference/staging_pose_left/position/x",      staging_pose_b_x_);
+  nh.getParam("intent_inference/staging_pose_left/position/y",      staging_pose_b_y_);
+  nh.getParam("intent_inference/staging_pose_left/position/z",      staging_pose_b_z_);
+  nh.getParam("intent_inference/staging_pose_left/orientation/x",   staging_pose_b_qx_);
+  nh.getParam("intent_inference/staging_pose_left/orientation/y",   staging_pose_b_qy_);
+  nh.getParam("intent_inference/staging_pose_left/orientation/z",   staging_pose_b_qz_);
+  nh.getParam("intent_inference/staging_pose_left/orientation/w",   staging_pose_b_qw_);
+  nh.getParam("intent_inference/layout_threshold",           layout_threshold_);
+  nh.getParam("intent_inference/staging_pose_reached_distance", staging_pose_reached_distance_);
 }
 
 /******************************************************
@@ -60,6 +113,9 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
       belief_[obj] = 1.0 / static_cast<double>(n);
     }
   }
+
+  // Determine the staging pose from the spatial layout of recorded objects.
+  this->computeStagingPose();
 }
 
  visualization_msgs::MarkerArray IntentInference::getBeliefVisualization()  {
@@ -156,6 +212,12 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
       gripper_marker.color.g = 0.0;
       gripper_marker.color.b = 1.0;
     break;
+    case RobotState::RETURN_ASSIST:
+      // cyan
+      gripper_marker.color.r = 0.0;
+      gripper_marker.color.g = 1.0;
+      gripper_marker.color.b = 1.0;
+    break;
     case RobotState::STANDBY:
     default:
       // gray
@@ -185,19 +247,22 @@ void IntentInference::updateGripperPosition() {
 void IntentInference::updateRobotState() {
   if (!is_positional_safety_button_pressed_) {
     // ----- Priority 1: safety button not pressed (STANDBY) -----
+    // Note: grasp_completed_ is intentionally NOT cleared here so it
+    // survives across STANDBY gaps (user releases button after placing
+    // an object, then re-engages).
     robot_state_ = RobotState::STANDBY;
   } else if (gripper_status_.data) {
     // ----- Priority 2: gripper is closed (PICK_GRASP) -----
     if (this->isNearTarget())
       this->removeTargetFromRecordedObjects();
     robot_state_ = RobotState::PICK_GRASP;
+    grasp_completed_ = true;  // latch: an object has been grasped
   } else if (this->isNearTarget()) {
     // ----- Priority 3: gripper is near target (PICK_READY) -----
     if (robot_state_ == RobotState::PICK_ASSIST && !this->isTargetReached()) {
       // [Exception] remain PICK_ASSIST if the planned position has not been reached
       robot_state_ = RobotState::PICK_ASSIST;
     } else {
-      /// TODO: Make sure this function works fine
       if (is_reset_pose_signal_transferred_ == false) {
         if (reset_pose_handler_) {
           is_reset_pose_completed_ = reset_pose_handler_();
@@ -215,16 +280,29 @@ void IntentInference::updateRobotState() {
     // ----- Finite State Machine -----
     switch (robot_state_) {
       case RobotState::STANDBY:
-        if (is_reject_cooldown_timer_started_) {
-          // The PICK_REJECT cooldown has not finished
-          // -> back to PICK_REJECT
+        if (return_in_progress_) {
+          // Was navigating back to staging — auto-resume on re-engage.
+          robot_state_ = RobotState::RETURN_ASSIST;
+        } else if (is_reject_cooldown_timer_started_) {
           robot_state_ = RobotState::PICK_REJECT;
         } else {
           robot_state_ = RobotState::PICK_MANUAL;
         }
       break;
+      // case RobotState::PICK_GRASP:
+      //   // Gripper has re-opened (otherwise Priority 2 would keep us in
+      //   // PICK_GRASP). Fall through to PICK_MANUAL; the grasp_completed_
+      //   // flag is already latched — PICK_MANUAL will handle RETURN_ASSIST.
+      //   robot_state_ = RobotState::PICK_MANUAL;
+      // break;
       case RobotState::PICK_MANUAL:
-        if (this->isInPickArea() && this->isTowardTarget() && this->isConfidenceHighEnough()) {
+        // --- Return-assist check (higher priority than pick-assist) ---
+        // grasp_completed_ is latched when gripper closes (Priority 2) and
+        // cleared when the return cycle completes or a new pick cycle starts.
+        if (grasp_completed_ && this->isTowardStagingPose()) {
+          robot_state_ = RobotState::RETURN_ASSIST;
+          return_in_progress_ = true;
+        } else if (this->isInPickArea() && this->isTowardTarget() && this->isConfidenceHighEnough()) {
           if (!is_assist_dwell_timer_started_) {
             this->triggerAssistDwellTimer();
             is_assist_dwell_timer_started_ = true;
@@ -233,11 +311,12 @@ void IntentInference::updateRobotState() {
           if (this->isAssistDwellTimePassed()) {
             robot_state_ = RobotState::PICK_ASSIST;
             is_assist_dwell_timer_started_ = false;
+            grasp_completed_ = false;  // starting a new pick cycle
           }
         } else {
           // remain PICK_MANUAL
           is_assist_dwell_timer_started_ = false;
-        } 
+        }
         is_reset_pose_signal_transferred_ = false;
         is_reset_pose_completed_ = false;
       break;
@@ -245,7 +324,7 @@ void IntentInference::updateRobotState() {
         if (this->isAwayFromTarget()) {
           robot_state_ = RobotState::PICK_REJECT;
         }
-        // else: remain LOCKED
+        // else: remain PICK_ASSIST
       break;
       case RobotState::PICK_REJECT:
         if (!is_reject_cooldown_timer_started_) {
@@ -259,6 +338,32 @@ void IntentInference::updateRobotState() {
           is_reject_cooldown_timer_started_ = false;
         }
         // else: remain RETREATED
+      break;
+      case RobotState::RETURN_ASSIST:
+        ROS_INFO_STREAM_THROTTLE(10, "Return assist activated.");
+        if (is_reset_pose_signal_transferred_ && is_reset_pose_completed_) {
+          // Tick N+1: the reset service has already been acknowledged.
+          // The motion controller has had one cycle to update its origin,
+          // so user_desired_gripper_pose_ now reflects the post-reset state
+          // and we can safely hand control back without a position jump.
+          ROS_INFO_STREAM("Return assist deactivated.");
+          robot_state_ = RobotState::PICK_MANUAL;
+          grasp_completed_ = false;
+          return_in_progress_ = false;
+        } else if (this->isNearStagingPose() || this->isAwayFromStagingPose()) {
+          // Tick N: trigger the reset. Stay in RETURN_ASSIST for one more
+          // tick so that getReturnAssistPose() keeps commanding the staging
+          // pose while the motion controller processes the reset.
+          if (!is_reset_pose_signal_transferred_) {
+            if (reset_pose_handler_) {
+              is_reset_pose_completed_ = reset_pose_handler_();
+              is_reset_pose_signal_transferred_ = true;
+            } else {
+              ROS_WARN("reset_pose_handler_");
+            }
+          }
+        }
+        // else: remain RETURN_ASSIST
       break;
       case RobotState::PICK_READY:
         // Not near the target anymore -> transfer back to PICK_MANUAL
@@ -281,7 +386,7 @@ void IntentInference::updateBelief() {
     // (1) direction_likelihood
     const double direction_similarity = getCosineSimilarity(user_command_velocity_, goal_direction);
     const double direction_base_score = (direction_similarity + 1) / 2;  // [-1, 1] -> [0, 1]
-    const double direction_likelihood = std::pow(direction_base_score, kDirectionLikelihoodParameter);
+    const double direction_likelihood = std::pow(direction_base_score, direction_likelihood_parameter_);
 
     // (2) proximity likelihood
     const double goal_distance = std::sqrt(
@@ -289,7 +394,7 @@ void IntentInference::updateBelief() {
         goal_direction.y * goal_direction.y +
         goal_direction.z * goal_direction.z
     );
-    const double proximity_likelihood = std::exp(-kProximityLikelihoodParameter * goal_distance);
+    const double proximity_likelihood = std::exp(-proximity_likelihood_parameter_ * goal_distance);
 
     // Markov transition update
     const double likelihood = direction_likelihood * proximity_likelihood;
@@ -347,16 +452,16 @@ const bool IntentInference::isNearTarget() const {
   const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
   if (target_direction == geometry_msgs::Vector3())  return false;
   const double target_distance_xy = std::hypot(target_direction.x, target_direction.y);
-  return target_distance_xy < kNearDistanceThreshold
-      && std::abs(target_direction.z) < kZDistanceThreshold;
+  return target_distance_xy < near_distance_threshold_
+      && std::abs(target_direction.z) < z_distance_threshold_;
 }
 
 const bool IntentInference::isTargetReached() const {
   const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
   if (target_direction == geometry_msgs::Vector3())  return false;
   const double target_distance_xy = std::hypot(target_direction.x, target_direction.y);
-  return target_distance_xy < kPositionTolerance
-      && std::abs(target_direction.z) < kZDistanceThreshold;
+  return target_distance_xy < position_tolerance_
+      && std::abs(target_direction.z) < z_distance_threshold_;
 }
 
 const bool IntentInference::isInPickArea() const {
@@ -369,7 +474,7 @@ const bool IntentInference::isInPickArea() const {
   const double dx = it->second.point.x - gripper_position_.x;
   const double dy = it->second.point.y - gripper_position_.y;
   const double dz = it->second.point.z - gripper_position_.z;
-  return std::sqrt(dx * dx + dy * dy + dz * dz) < kPickAreaDistanceThreshold;
+  return std::sqrt(dx * dx + dy * dy + dz * dz) < pick_area_distance_threshold_;
 }
 
 const bool IntentInference::isTowardTarget() const {
@@ -382,7 +487,7 @@ const bool IntentInference::isTowardTarget() const {
       target_direction
   );
   
-  return direction_similarity >= kTowardTargetDirectionSimilarityThreshold;
+  return direction_similarity >= toward_target_similarity_;
 }
 
 void IntentInference::triggerAssistDwellTimer() {
@@ -391,7 +496,7 @@ void IntentInference::triggerAssistDwellTimer() {
 
 const bool IntentInference::isAssistDwellTimePassed() {
   assist_dwell_timer_.current_time = ros::Time::now();
-  return assist_dwell_timer_.getTimeDifference() >= kAssistDwellTime;
+  return assist_dwell_timer_.getTimeDifference() >= assist_dwell_time_;
 }
 
 const bool IntentInference::isAwayFromTarget() const {
@@ -400,13 +505,13 @@ const bool IntentInference::isAwayFromTarget() const {
   if (target_distance < kDirectionTolerance)  return false;  // avoid divide-by-zero
 
   const double user_command_speed = norm(user_command_velocity_);
-  if (user_command_speed < kUserCommandSpeedTolerance)  return false; // ignore little speed
+  if (user_command_speed < user_command_speed_tolerance_)  return false; // ignore little speed
 
   const double direction_similarity = this->getCosineSimilarity(
       user_command_velocity_,
       target_direction
   );
-  return direction_similarity < kAwayTargetDirectionSimilarityThreshold;
+  return direction_similarity < away_target_similarity_;
 }
 
 void IntentInference::triggerRejectCooldownTimer() {
@@ -415,10 +520,91 @@ void IntentInference::triggerRejectCooldownTimer() {
 
 const bool IntentInference::isRejectCooldownTimePassed() {
   cooldown_timer_.current_time = ros::Time::now();
-  return cooldown_timer_.getTimeDifference() >= kRejectCooldownTime;
+  return cooldown_timer_.getTimeDifference() >= reject_cooldown_time_;
 }
 
-geometry_msgs::Vector3 IntentInference::getGoalDirection(const detection_msgs::DetectedObject& goal) const { 
+void IntentInference::computeStagingPose() {
+  if (recorded_objects_.objects.empty()) {
+    // Default to staging A if no objects
+    staging_pose_.position.x = staging_pose_a_x_;
+    staging_pose_.position.y = staging_pose_a_y_;
+    staging_pose_.position.z = staging_pose_a_z_;
+    staging_pose_.orientation.x = staging_pose_a_qx_;
+    staging_pose_.orientation.y = staging_pose_a_qy_;
+    staging_pose_.orientation.z = staging_pose_a_qz_;
+    staging_pose_.orientation.w = staging_pose_a_qw_;
+    return;
+  }
+  // Compute mean y of all recorded objects in tm_base to determine layout.
+  double mean_y = 0.0;
+  for (const auto& obj : recorded_objects_.objects) {
+    mean_y += position_wrt_tm_base_[obj].point.y;
+  }
+  mean_y /= static_cast<double>(recorded_objects_.objects.size());
+
+  if (mean_y >= layout_threshold_) {
+    // Left layout -> staging B
+    staging_pose_.position.x = staging_pose_b_x_;
+    staging_pose_.position.y = staging_pose_b_y_;
+    staging_pose_.position.z = staging_pose_b_z_;
+    staging_pose_.orientation.x = staging_pose_b_qx_;
+    staging_pose_.orientation.y = staging_pose_b_qy_;
+    staging_pose_.orientation.z = staging_pose_b_qz_;
+    staging_pose_.orientation.w = staging_pose_b_qw_;
+    ROS_INFO_STREAM("IntentInference: left layout detected (mean_y=" << mean_y
+        << "), staging pose B selected");
+  } else {
+    // Front layout -> staging A
+    staging_pose_.position.x = staging_pose_a_x_;
+    staging_pose_.position.y = staging_pose_a_y_;
+    staging_pose_.position.z = staging_pose_a_z_;
+    staging_pose_.orientation.x = staging_pose_a_qx_;
+    staging_pose_.orientation.y = staging_pose_a_qy_;
+    staging_pose_.orientation.z = staging_pose_a_qz_;
+    staging_pose_.orientation.w = staging_pose_a_qw_;
+    ROS_INFO_STREAM("IntentInference: front layout detected (mean_y=" << mean_y
+        << "), staging pose A selected");
+  }
+}
+
+const bool IntentInference::isTowardStagingPose() const {
+  geometry_msgs::Vector3 staging_direction;
+  staging_direction.x = staging_pose_.position.x - gripper_position_.x;
+  staging_direction.y = staging_pose_.position.y - gripper_position_.y;
+  staging_direction.z = staging_pose_.position.z - gripper_position_.z;
+  const double dist = norm(staging_direction);
+  if (dist < kDirectionTolerance) return false;
+
+  const double user_speed = norm(user_command_velocity_);
+  if (user_speed < user_command_speed_tolerance_) return false;
+
+  return this->getCosineSimilarity(user_command_velocity_, staging_direction)
+      >= toward_target_similarity_;
+}
+
+const bool IntentInference::isNearStagingPose() const {
+  const double dx = staging_pose_.position.x - gripper_position_.x;
+  const double dy = staging_pose_.position.y - gripper_position_.y;
+  const double dz = staging_pose_.position.z - gripper_position_.z;
+  return std::sqrt(dx*dx + dy*dy + dz*dz) < staging_pose_reached_distance_;
+}
+
+const bool IntentInference::isAwayFromStagingPose() const {
+  geometry_msgs::Vector3 staging_direction;
+  staging_direction.x = staging_pose_.position.x - gripper_position_.x;
+  staging_direction.y = staging_pose_.position.y - gripper_position_.y;
+  staging_direction.z = staging_pose_.position.z - gripper_position_.z;
+  const double dist = norm(staging_direction);
+  if (dist < kDirectionTolerance) return false;
+
+  const double user_speed = norm(user_command_velocity_);
+  if (user_speed < user_command_speed_tolerance_) return false;
+
+  return this->getCosineSimilarity(user_command_velocity_, staging_direction)
+      < away_target_similarity_;
+}
+
+geometry_msgs::Vector3 IntentInference::getGoalDirection(const detection_msgs::DetectedObject& goal) const {
   geometry_msgs::Vector3 goal_direction;
   goal_direction.x = position_wrt_tm_base_.at(goal).point.x - gripper_position_.x;
   goal_direction.y = position_wrt_tm_base_.at(goal).point.y - gripper_position_.y;

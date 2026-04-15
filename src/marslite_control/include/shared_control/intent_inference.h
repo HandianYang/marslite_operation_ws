@@ -36,12 +36,13 @@ enum class RobotState : uint8_t {
   PICK_ASSIST = 2,
   PICK_REJECT = 3,
   PICK_READY = 4,
-  PICK_GRASP = 5
+  PICK_GRASP = 5,
+  RETURN_ASSIST = 6
   /// TODO: Add PLACE phase states
-  // PLACE_MANUAL = 6,
-  // PLACE_ASSIST = 7,
-  // PLACE_READY = 8,
-  // PLACE_COMPLETE = 9,
+  // PLACE_MANUAL,
+  // PLACE_ASSIST,
+  // PLACE_READY,
+  // PLACE_COMPLETE,
 };
 
 static std::string toString(RobotState s) {
@@ -51,7 +52,8 @@ static std::string toString(RobotState s) {
     case RobotState::PICK_ASSIST:  return "PICK_ASSIST";
     case RobotState::PICK_REJECT:  return "PICK_REJECT";
     case RobotState::PICK_READY:   return "PICK_READY";
-    case RobotState::PICK_GRASP:   return "PICK_GRASP";
+    case RobotState::PICK_GRASP:    return "PICK_GRASP";
+    case RobotState::RETURN_ASSIST: return "RETURN_ASSIST";
     // case RobotState::PLACE_MANUAL:  return "PLACE_MANUAL";
     // case RobotState::PLACE_ASSIST:  return "PLACE_ASSIST";
     // case RobotState::PLACE_READY:   return "PLACE_READY";
@@ -64,43 +66,15 @@ class IntentInference {
  public:
   using ResetPoseHandler = std::function<bool()>;
 
-  static inline constexpr double kDirectionLikelihoodParameter = 4.0;
-  static inline constexpr double kProximityLikelihoodParameter = 3.0;
-  // Normalized-entropy confidence: confidence = 1 - H / log(N), where
-  // H = -sum(p * log p). Bounded in [0, 1] regardless of N:
-  //   - uniform distribution -> 0
-  //   - fully concentrated   -> 1
-  //   - N == 1               -> 1 (single candidate = certain)
-  // This avoids the upper-bound problem of top1*N when N is small.
-  static inline constexpr double kAssistanceActivatedConfidenceThreshold = 0.45;
-  // [m] TM5-700 effective planar reach. Objects beyond this (measured from
-  // tm_base in the XY plane) are excluded from the belief pool so that
-  // unreachable items cannot dilute the probability of reachable targets.
-  // static inline constexpr double kMaxReachableRadius = 0.9;
-  // [m] Used for isNearTarget() and isTargetReached()
-  static inline constexpr double kZDistanceThreshold = 0.15;
-  // [m] Ready-to-pick zone
-  static inline constexpr double kNearDistanceThreshold = 0.03;
-  // [m] 
-  static inline constexpr double kPositionTolerance = 5e-3;
-  // [m]
-  static inline constexpr double kPickAreaDistanceThreshold = 0.40;
-  // [m]
-  static inline constexpr double kDirectionTolerance = 1e-3;
-  // [m/s]
-  static inline constexpr double kUserCommandSpeedTolerance = 0.15;
-  // [rad] cos(45 degrees) = 0.707
-  static inline constexpr double kTowardTargetDirectionSimilarityThreshold = 0.5;
-  // [rad] cos(135 degrees) = -0.707
-  static inline constexpr double kAwayTargetDirectionSimilarityThreshold = -0.707;
-  // [s] 
-  static inline constexpr double kAssistDwellTime = 0.3;
-  // [s] 
-  static inline constexpr double kRejectCooldownTime = 1.0;
+  // numerical tolerances (not tunable — keep as compile-time constants)
+  static inline constexpr double kDirectionTolerance = 1e-3;  // [m]
+  static inline constexpr double kDistanceTolerance  = 1e-3;  // [m]
 
-  IntentInference(const double& transition_probability = 0.1);
+  IntentInference();
 
-  void registerResetPoseHandler(const ResetPoseHandler& handler) {
+  void parseParameters(const ros::NodeHandle& nh);
+
+  inline void registerResetPoseHandler(const ResetPoseHandler& handler) {
     reset_pose_handler_ = handler;
   }
 
@@ -176,6 +150,14 @@ class IntentInference {
     return robot_state_ == RobotState::PICK_ASSIST;
   }
 
+  inline const bool isReturnAssistanceActive() const {
+    return robot_state_ == RobotState::RETURN_ASSIST;
+  }
+
+  inline geometry_msgs::Pose getStagingPose() const {
+    return staging_pose_;
+  }
+
   void updateObjectPositionToTmBase();
   
   void updateGripperPosition();
@@ -215,7 +197,7 @@ class IntentInference {
   const bool isTowardTarget() const;
 
   inline const bool isConfidenceHighEnough() const {
-    return confidence_ >= kAssistanceActivatedConfidenceThreshold;
+    return confidence_ >= confidence_threshold_;
   }
 
   /**
@@ -252,6 +234,14 @@ class IntentInference {
    */
   const bool isRejectCooldownTimePassed();
 
+  const bool isTowardStagingPose() const;
+
+  const bool isNearStagingPose() const;
+
+  const bool isAwayFromStagingPose() const;
+
+  void computeStagingPose();
+
   geometry_msgs::Vector3 getGoalDirection(const detection_msgs::DetectedObject& goal) const;
   
   double getCosineSimilarity(const geometry_msgs::Vector3& user_direction,
@@ -265,8 +255,28 @@ class IntentInference {
     return std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
   }
 
-  double transition_probability_; // [0,1], constant
-  double confidence_; // [0,1]
+  // --- Parameters (loaded from YAML via parseParameters) ---
+  double transition_probability_;
+  double direction_likelihood_parameter_;
+  double proximity_likelihood_parameter_;
+  double confidence_threshold_;
+  double z_distance_threshold_;
+  double near_distance_threshold_;
+  double position_tolerance_;
+  double pick_area_distance_threshold_;
+  double user_command_speed_tolerance_;
+  double toward_target_similarity_;
+  double away_target_similarity_;
+  double assist_dwell_time_;
+  double reject_cooldown_time_;
+  double staging_pose_a_x_, staging_pose_a_y_, staging_pose_a_z_;
+  double staging_pose_a_qx_, staging_pose_a_qy_, staging_pose_a_qz_, staging_pose_a_qw_;
+  double staging_pose_b_x_, staging_pose_b_y_, staging_pose_b_z_;
+  double staging_pose_b_qx_, staging_pose_b_qy_, staging_pose_b_qz_, staging_pose_b_qw_;
+  double layout_threshold_;
+  double staging_pose_reached_distance_;
+
+  double confidence_; // [0,1], computed at runtime
 
   bool use_sim_;
   bool is_inference_activated_;
@@ -292,7 +302,10 @@ class IntentInference {
   detection_msgs::ObjectPositionMap position_wrt_tm_base_;
   Tf2ListenerWrapper tf2_listener_;
   RobotState robot_state_;
+  bool grasp_completed_;       // latches true when gripper closes; cleared on RETURN_ASSIST exit
+  bool return_in_progress_;    // latches true on RETURN_ASSIST entry; enables auto-resume from STANDBY
   ResetPoseHandler reset_pose_handler_;
+  geometry_msgs::Pose staging_pose_;
 };
 
 #endif // MARSLITE_CONTROl_SHARED_CONTROL_INTENT_INFERENCE_H

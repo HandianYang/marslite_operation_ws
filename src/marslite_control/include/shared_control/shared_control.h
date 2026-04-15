@@ -16,28 +16,9 @@
 #include "utils/rpy.h"
 
 class SharedControl {
- public:
+ public:  
+  // numerical tolerance (not tunable)
   static inline constexpr double kDistanceTolerance = 1e-3;
-  // Lateral (u_phi) gain bounds. Smoothly interpolated by horizontal distance
-  // to target: tighter (closer to kRepulsiveForceStrongGain) as the gripper
-  // approaches the target so accidental sideways drift is suppressed.
-  static inline constexpr double kRepulsiveForceWeakGain = 0.8;
-  static inline constexpr double kRepulsiveForceStrongGain = 0.2;
-  // [m] horizontal distance at which the lateral suppression reaches its
-  // looser end (kRepulsiveForceWeakGain).
-  static inline constexpr double kRepulsiveForceJunctionDistance = 0.3;
-  // [m] horizontal distance beyond which the attractive lead is zero.
-  // Below this, the lead ramps up linearly toward the full gain.
-  static inline constexpr double kAttractMaxDistance = 0.40;
-  // [0,1] Position-level attractive gain. Each tick, the blended command is
-  // pulled toward the target by this fraction of the *remaining* horizontal
-  // distance (times a distance ramp). Unlike a per-tick velocity bias, this
-  // persists every tick regardless of how fast the arm catches up, so the
-  // closing speed is not capped by the arm's tracking bandwidth.
-  // Tune range: 0.10 (gentle) .. 0.40 (aggressive).
-  static inline constexpr double kAttractGainHorizontal = 0.8;
-  // [0,1] Same idea, applied to the vertical error toward the target.
-  static inline constexpr double kAttractGainVertical = 0.20;
 
   explicit SharedControl(const ros::NodeHandle& nh = ros::NodeHandle());
 
@@ -64,6 +45,7 @@ class SharedControl {
   geometry_msgs::PoseStamped getBlendedPose();
   geometry_msgs::Point getBlendedPosition();
   geometry_msgs::Quaternion getBlendedOrientation();
+  geometry_msgs::PoseStamped getReturnAssistPose();
 
   void publishIntentBeliefVisualization();
   
@@ -100,8 +82,20 @@ class SharedControl {
   std_msgs::Bool orientation_safety_button_signal_;
   geometry_msgs::Vector3 user_command_velocity_;
 
+  // --- Arbitration parameters (loaded from YAML) ---
+  double repulsive_force_weak_gain_;
+  double repulsive_force_strong_gain_;
+  double repulsive_force_junction_distance_;
+  double attract_max_distance_;
+  double attract_gain_horizontal_;
+  double attract_gain_vertical_;
+  double return_assist_angular_rate_;
+  double return_assist_radial_rate_;
+  double return_assist_vertical_rate_;
+  double return_assist_orientation_rate_;
+
   // true if running in simulation
-  bool use_sim_;  
+  bool use_sim_;
   // true if shared control is enabled (not affect the use of `recorded_objects`)
   bool shared_control_enabled_;
   // true if record_signal is received
