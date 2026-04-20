@@ -154,11 +154,9 @@ class MotionControllerTeleoperation {
   // ROS mechanisms
   ros::NodeHandle nh_;
   ros::Rate loop_rate_;
-  ros::Publisher target_frame_publisher_; // for teleoperateToPose() usage
-  ros::Publisher desired_gripper_pose_publisher_; // for pure teleoperation & shared control
+  ros::Publisher desired_gripper_pose_publisher_;
   ros::Publisher current_gripper_pose_publisher_;
   ros::Publisher gripper_status_publisher_;
-  ros::Publisher restart_attempt_signal_publisher_;
   ros::Publisher record_signal_publisher_;
   ros::Publisher position_safety_button_signal_publisher_;
   ros::Publisher orientation_safety_button_signal_publisher_;
@@ -177,46 +175,6 @@ class MotionControllerTeleoperation {
   geometry_msgs::Vector3 user_command_velocity_;
   geometry_msgs::Vector3 gripper_velocity_;
   geometry_msgs::Twist mobile_platform_velocity_;
-  std_msgs::Bool desired_gripper_status_;
-  std_msgs::Bool record_signal_;
-  std_msgs::Bool position_safety_button_signal_;
-  std_msgs::Bool orientation_safety_button_signal_;
-  visualization_msgs::Marker user_command_velocity_marker_;
-  visualization_msgs::Marker gripper_velocity_marker_;
-
-  // flags
-  bool is_ready_to_teleop_;
-  bool is_position_change_enabled_;
-  bool is_orientation_change_enabled_;
-  bool use_shared_controller_;  // false if using pure teleoperation
-  bool use_sim_;  // true if running in simulation
-  bool is_shoulder_position_calibrated_;  // true if the initial shoulder point is calibrated
-
-  // parameters
-  double platform_linear_scale_;
-  double platform_angular_scale_;
-  double gripper_position_radius_scale_;
-  double gripper_position_yaw_scale_;
-  double gripper_position_height_scale_;
-  double gripper_orientation_roll_scale_;
-  double gripper_orientation_pitch_scale_;
-  double gripper_orientation_yaw_scale_;
-
-  // position limits (loaded from YAML)                                         
-  double gripper_position_radius_min_;
-  double gripper_position_radius_max_;
-  double gripper_position_height_min_;
-  double gripper_position_height_max_;    
-                                                                               
-  // orientation limits in radians (converted from degrees in YAML)             
-  double gripper_orientation_roll_limit_;
-  double gripper_orientation_pitch_limit_;
-  double gripper_orientation_yaw_limit_;
-  // [radian] angle difference between first joint yaw angle and control view direction
-  double control_view_offset_;
-  // [radian] the operator's "forward" direction in tm_base; updated only by
-  //  position control yaw and explicit resets — never by orientation control
-  double control_view_angle_;
   geometry_msgs::PoseStamped initial_gripper_pose_;
   geometry_msgs::PoseStamped current_gripper_pose_;
   geometry_msgs::PoseStamped desired_gripper_pose_;
@@ -227,7 +185,45 @@ class MotionControllerTeleoperation {
   bool is_last_published_pose_initialized_;
   geometry_msgs::PoseStamped initial_left_controller_pose_;
   geometry_msgs::PoseStamped current_left_controller_pose_;
+  std_msgs::Bool desired_gripper_status_;
+  std_msgs::Bool record_signal_;
+  std_msgs::Bool position_safety_button_signal_;
+  std_msgs::Bool orientation_safety_button_signal_;
+  visualization_msgs::Marker user_command_velocity_marker_;
+  visualization_msgs::Marker gripper_velocity_marker_;
 
+  // flags
+  bool debug_msg_enabled_;
+  bool is_ready_to_teleop_;
+  bool is_position_change_enabled_;
+  bool is_orientation_change_enabled_;
+  bool use_shared_controller_;  // false if using pure teleoperation
+  bool use_sim_;  // true if running in simulation
+  bool is_shoulder_position_calibrated_;  // true if the initial shoulder point is calibrated
+
+  // parameters (loaded from YAML)
+  double platform_linear_scale_;
+  double platform_angular_scale_;
+  double gripper_position_radius_scale_;
+  double gripper_position_yaw_scale_;
+  double gripper_position_height_scale_;
+  double gripper_orientation_roll_scale_;
+  double gripper_orientation_pitch_scale_;
+  double gripper_orientation_yaw_scale_;
+  double gripper_position_radius_min_;
+  double gripper_position_radius_max_;
+  double gripper_position_height_min_;
+  double gripper_position_height_max_;
+  double gripper_orientation_roll_limit_;
+  double gripper_orientation_pitch_limit_;
+  double gripper_orientation_yaw_limit_;
+
+  // [radian] angle difference between first joint yaw angle and control view direction
+  double control_view_offset_;
+  // [radian] the operator's "forward" direction in tm_base; updated only by
+  //  position control yaw and explicit resets — never by orientation control
+  double control_view_angle_;
+  
   std::mutex desired_gripper_pose_mutex_;  // protect desired_gripper_pose_
   VelocityEstimator user_command_velocity_estimator_;
   VelocityEstimator gripper_velocity_estimator_;

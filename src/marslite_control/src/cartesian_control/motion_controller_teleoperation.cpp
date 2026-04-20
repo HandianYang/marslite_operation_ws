@@ -127,10 +127,9 @@ void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseS
   is_ready_to_teleop_ = false; // Disable teleoperation during guiding phase
 
   this->initializeGripperPose();
-  // target_frame_publisher_.publish(target_pose);
   desired_gripper_pose_publisher_.publish(target_pose);
   
-  ROS_INFO_STREAM("Guiding to initial gripper pose: \n"
+  ROS_INFO_STREAM("Guiding the gripper to pose: \n"
       << " - Position: (" 
       << target_pose.pose.position.x << ", "
       << target_pose.pose.position.y << ", "
@@ -144,7 +143,7 @@ void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseS
 
   // Perform teleoperation until the current gripper pose reaches the target pose
   while (nh_.ok() && !this->targetPoseIsReached(target_pose)) {
-    ROS_INFO_STREAM_THROTTLE(5, "Waiting to reach the target pose...");
+    ROS_INFO_STREAM_THROTTLE(30, "Waiting to reach the target pose...");
     this->updateGripperPose();
     loop_rate_.sleep();
     ros::spinOnce();
@@ -152,7 +151,7 @@ void MotionControllerTeleoperation::teleoperateToPose(const geometry_msgs::PoseS
   initial_gripper_pose_ = current_gripper_pose_;
 
   ROS_INFO_STREAM("Reached the target pose.");
-  ROS_INFO_STREAM_ONCE("Remember to calibrate your shoulder position before teleoperation.");
+  ROS_WARN_STREAM_ONCE("Remember to calibrate your shoulder position before teleoperation.");
   is_ready_to_teleop_ = true;
 }
 
@@ -194,7 +193,9 @@ void MotionControllerTeleoperation::run() {
       this->publishGripperVelocityMarker();
       this->publishUserCommandVelocity();
       this->publishUserCommandVelocityMarker();
-      this->printCylindricalPose();
+
+      if (debug_msg_enabled_)
+        this->printCylindricalPose();
     } // end desired_gripper_pose_mutex_ scope
 
     this->publishMobilePlatformVelocity();
@@ -215,6 +216,7 @@ void MotionControllerTeleoperation::parseParameters() {
   control_view_offset_ = use_sim_ ? 0.0 : M_PI / 2;
 
   ros::NodeHandle pnh("~");
+  pnh.param("debug_msg_enabled", debug_msg_enabled_, false);
   pnh.param("use_sim", use_sim_, false);
   pnh.param("use_shared_controller", use_shared_controller_, false);
 
@@ -264,11 +266,6 @@ void MotionControllerTeleoperation::parseParameters() {
 }
 
 void MotionControllerTeleoperation::initializePublishers() {
-  // This publisher is used only in teleoperateToPose() to publish the target
-  //   pose command to the robot directly.
-  target_frame_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>(
-      "/target_frame", 1);
-  
   // The desired gripper pose will be published to different topics according
   // to the `use_shared_controller_` parameter.
   // - use_shared_controller_ = true: published to shared controller
@@ -291,8 +288,6 @@ void MotionControllerTeleoperation::initializePublishers() {
       "/marslite_control/orientation_safety_button_signal", 1);
   mobile_platform_velocity_publisher_ = nh_.advertise<geometry_msgs::Twist>(
       "/mob_plat/cmd_vel", 1);
-  restart_attempt_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
-      "/marslite_control/restart_attempt_signal", 1);
   record_signal_publisher_ = nh_.advertise<std_msgs::Bool>(
       "/marslite_control/record_signal", 1);
   
@@ -380,37 +375,32 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
 
   switch (msg->buttons.size()) {
     case 5:
-      // [4] B button: Drive the robot back to the initial pose
+      // [4] B button: Drive the robot to the front pose
+      static ros::Time b_button_press_start_time = ros::Time(0);
       if (msg->buttons[4] == 1) {
         // Reset to initial pose after pressing the button for 1 second
-        static ros::Time b_button_press_start_time = ros::Time(0);
         if (b_button_press_start_time.isZero()) {
           b_button_press_start_time = ros::Time::now();
         } else if ((ros::Time::now() - b_button_press_start_time).toSec() > 1.0) {
-          ROS_INFO("Reset robot pose to the inital pose...");
           b_button_press_start_time = ros::Time(0); // Reset after publishing
-          // TODO: consider resetting to different initial poses
           this->resetToFrontPose();
         }
+      } else {
+        b_button_press_start_time = ros::Time(0);
       }
     case 4:
-      // [3] A button: Restart this attempt 
+      // [3] A button: Drive the robot to the ready pose (left)
+      static ros::Time a_button_press_start_time = ros::Time(0);
       if (msg->buttons[3] == 1) {
-        // Send attempt restart signal and reset to initial pose after pressing
-        //  the button for 1 second
-        static ros::Time a_button_press_start_time = ros::Time(0);
+        // Reset to initial pose after pressing the button for 1 second
         if (a_button_press_start_time.isZero()) {
           a_button_press_start_time = ros::Time::now();
         } else if ((ros::Time::now() - a_button_press_start_time).toSec() > 1.0) {
-          ROS_INFO("Restart this attempt. Reset robot pose to the inital pose...");
           a_button_press_start_time = ros::Time(0); // Reset after publishing
-          // TODO: consider resetting to different initial poses
           this->resetToReadyPose();
-
-          std_msgs::Bool signal;
-          signal.data = true;
-          restart_attempt_signal_publisher_.publish(signal);
         }
+      } else {
+        a_button_press_start_time = ros::Time(0);
       }
     case 3:
       // [2] stick button: Send `record_signal` to `shared_control`
@@ -448,16 +438,18 @@ void MotionControllerTeleoperation::toggleGripperStatus() {
   if ((current_time - last_toggle_time).toSec() > kGripperToggleCooldownTime) {
     desired_gripper_status_.data = !desired_gripper_status_.data;
     if (desired_gripper_status_.data) {
-      ROS_INFO("Close the gripper");
+      ROS_INFO_COND(debug_msg_enabled_, "Close the gripper");
     } else {
-      ROS_INFO("Open the gripper");
+      ROS_INFO_COND(debug_msg_enabled_, "Open the gripper");
     }
     gripper_status_publisher_.publish(desired_gripper_status_);
     last_toggle_time = current_time;
   }
 }
 
-bool MotionControllerTeleoperation::resetCallback(std_srvs::Trigger::Request &req, std_srvs::Trigger::Response &res) {
+bool MotionControllerTeleoperation::resetCallback(
+    std_srvs::Trigger::Request &req,
+    std_srvs::Trigger::Response &res) {
   {
     std::lock_guard<std::mutex> lock(desired_gripper_pose_mutex_);
     this->updateGripperPose();
