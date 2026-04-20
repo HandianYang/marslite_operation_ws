@@ -78,6 +78,10 @@ void SharedControl::parseParameters() {
   pnh.param("use_sim", use_sim_, false);
   pnh.param("shared_control_enabled", shared_control_enabled_, true);
 
+  bool return_assist_enabled = true;
+  pnh.param("return_assist_enabled", return_assist_enabled, true);
+  intent_inference_.setReturnAssistEnabled(return_assist_enabled);
+
   // Arbitration parameters (defaults match the old compile-time constants)
   nh_.param("arbitration/repulsive_force_weak_gain",        repulsive_force_weak_gain_,        0.8);
   nh_.param("arbitration/repulsive_force_strong_gain",      repulsive_force_strong_gain_,      0.2);
@@ -277,14 +281,19 @@ geometry_msgs::Point SharedControl::getBlendedPosition() {
   //      so the arm sees a sustained lead regardless of how slowly it
   //      tracks. The closing speed is therefore set by the combination of
   //      alpha and the arm's own bandwidth, not clipped to bandwidth * step.
-  const double t_attract = 1.0 - std::clamp(d_xy / attract_max_distance_, 0.0, 1.0);
-  const double alpha_xy = attract_gain_horizontal_ * t_attract;
-  const double alpha_z  = attract_gain_vertical_   * t_attract;
+  // Logarithmic attract profile: lead = G * D * log(1 + k*t) / log(1 + k),
+  // where t = d_xy / D. The old quadratic (G * d^2 / D) dropped to 25% at
+  // half-distance; this curve still provides ~74% there, giving the operator
+  // noticeable assist throughout the approach without overshooting.
+  constexpr double kLogCurvature = 9.0;
+  const double t_attract = std::clamp(d_xy / attract_max_distance_, 0.0, 1.0);
+  const double log_factor = std::log(1.0 + kLogCurvature * t_attract)
+                          / std::log(1.0 + kLogCurvature);
   const double dz = target_position.z() - gripper_position.z();
 
   const Eigen::Vector3d attract_lead =
-      (alpha_xy * d_xy) * u_r +
-      (alpha_z  * dz)   * u_z;
+      (attract_gain_horizontal_ * attract_max_distance_ * log_factor) * u_r +
+      (attract_gain_vertical_   * dz * log_factor) * u_z;
 
   const Eigen::Vector3d blended_gripper_position =
       gripper_position + shaped_user_delta + attract_lead;

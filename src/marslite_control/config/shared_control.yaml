@@ -53,7 +53,7 @@ intent_inference:
       z: 0.707
       w: 0.0
   layout_threshold: 0.3  # [m] mean_y threshold for staging poses
-  staging_pose_reached_distance: 0.05 # [m] distance to consider staging reached
+  staging_pose_reached_angle: 0.05 # [rad] ~3° azimuth convergence to end return-assist
 
 arbitration:
   # --- Lateral suppression ---
@@ -67,7 +67,7 @@ arbitration:
   attract_gain_vertical: 0.2  # [0,1] fraction of remaining Z error
 
   # --- Return-assist waypoint navigation (cylindrical) ---
-  return_assist_angular_rate: 0.8   # azimuth convergence (primary motion)
-  return_assist_radial_rate: 0.3    # radius contraction (slower)
-  return_assist_vertical_rate: 0.5  # height convergence
-  return_assist_orientation_rate: 0.6  # slerp rate for gripper orientation
+  return_assist_angular_rate: 0.9   # azimuth convergence (primary motion)
+  return_assist_radial_rate: 0.8    # radius contraction (slower)
+  return_assist_vertical_rate: 0.7  # height convergence
+  return_assist_orientation_rate: 0.9  # slerp rate for gripper orientation

@@ -72,6 +72,10 @@ class IntentInference {
 
   IntentInference();
 
+  static void loadPoseParam(const ros::NodeHandle& nh,
+                            const std::string& prefix,
+                            geometry_msgs::Pose& pose);
+
   void parseParameters(const ros::NodeHandle& nh);
 
   inline void registerResetPoseHandler(const ResetPoseHandler& handler) {
@@ -94,6 +98,10 @@ class IntentInference {
 
   inline void setSafetyButtonStatus(const bool& is_pressed) {
     is_positional_safety_button_pressed_ = is_pressed;
+  }
+
+  inline void setReturnAssistEnabled(const bool& enabled) {
+    return_assist_enabled_ = enabled;
   }
 
   inline detection_msgs::DetectedObjectArray getObjectsWithBelief() const {
@@ -167,6 +175,8 @@ class IntentInference {
    *   listed in `marslite_control/README.md`
    */
   void updateRobotState();
+
+  void triggerResetPoseService();
 
   void updateBelief();
 
@@ -269,16 +279,15 @@ class IntentInference {
   double away_target_similarity_;
   double assist_dwell_time_;
   double reject_cooldown_time_;
-  double staging_pose_a_x_, staging_pose_a_y_, staging_pose_a_z_;
-  double staging_pose_a_qx_, staging_pose_a_qy_, staging_pose_a_qz_, staging_pose_a_qw_;
-  double staging_pose_b_x_, staging_pose_b_y_, staging_pose_b_z_;
-  double staging_pose_b_qx_, staging_pose_b_qy_, staging_pose_b_qz_, staging_pose_b_qw_;
+  geometry_msgs::Pose staging_pose_front_;
+  geometry_msgs::Pose staging_pose_left_;
   double layout_threshold_;
-  double staging_pose_reached_distance_;
+  double staging_pose_reached_angle_;   // [rad] azimuth convergence threshold
 
   double confidence_; // [0,1], computed at runtime
 
   bool use_sim_;
+  bool return_assist_enabled_;
   bool is_inference_activated_;
   bool is_positional_safety_button_pressed_;
   bool is_assist_dwell_timer_started_;
