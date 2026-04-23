@@ -65,7 +65,8 @@ class MotionControllerTeleoperation {
       const bool& use_sim = false
   );
 
-  void resetToReadyPose();
+  void resetToFrontStagingPose();
+  void resetToLeftStagingPose();
   void resetToFrontPose();
   void resetToLeftPose();
   void resetToRightPose();

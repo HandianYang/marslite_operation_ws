@@ -70,7 +70,23 @@ geometry_msgs::PoseStamped MotionControllerTeleoperation::generateInitialGripper
   return initial_pose;
 }
 
-void MotionControllerTeleoperation::resetToReadyPose() {
+void MotionControllerTeleoperation::resetToFrontStagingPose() {
+  geometry_msgs::PoseStamped pose;
+  pose.header.frame_id = "tm_base";
+  pose.pose.position.x = 0.5;
+  pose.pose.position.y = -0.122;
+  pose.pose.position.z = 0.6;
+  pose.pose.orientation.x = 0.5;
+  pose.pose.orientation.y = 0.5;
+  pose.pose.orientation.z = 0.5;
+  pose.pose.orientation.w = 0.5;
+  this->teleoperateToPose(pose);
+
+  // NOTE: This must be set after teleoperateToPose()
+  control_view_angle_ = 0.0;
+}
+
+void MotionControllerTeleoperation::resetToLeftStagingPose() {
   geometry_msgs::PoseStamped pose;
   pose.header.frame_id = "tm_base";
   pose.pose.position.x = 0.122;
@@ -375,7 +391,7 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
 
   switch (msg->buttons.size()) {
     case 5:
-      // [4] B button: Drive the robot to the front pose
+      // [4] B button: Drive the robot to the front staging pose
       static ros::Time b_button_press_start_time = ros::Time(0);
       if (msg->buttons[4] == 1) {
         // Reset to initial pose after pressing the button for 1 second
@@ -383,13 +399,13 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
           b_button_press_start_time = ros::Time::now();
         } else if ((ros::Time::now() - b_button_press_start_time).toSec() > 1.0) {
           b_button_press_start_time = ros::Time(0); // Reset after publishing
-          this->resetToFrontPose();
+          this->resetToFrontStagingPose();
         }
       } else {
         b_button_press_start_time = ros::Time(0);
       }
     case 4:
-      // [3] A button: Drive the robot to the ready pose (left)
+      // [3] A button: Drive the robot to the left staging pose
       static ros::Time a_button_press_start_time = ros::Time(0);
       if (msg->buttons[3] == 1) {
         // Reset to initial pose after pressing the button for 1 second
@@ -397,7 +413,7 @@ void MotionControllerTeleoperation::leftControllerJoyCallback(const sensor_msgs:
           a_button_press_start_time = ros::Time::now();
         } else if ((ros::Time::now() - a_button_press_start_time).toSec() > 1.0) {
           a_button_press_start_time = ros::Time(0); // Reset after publishing
-          this->resetToReadyPose();
+          this->resetToLeftStagingPose();
         }
       } else {
         a_button_press_start_time = ros::Time(0);

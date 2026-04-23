@@ -12,7 +12,7 @@ int main(int argc, char **argv)
   // - resetToLeftFrontPose();
   // - resetToRightPose();
   // Change to your desired initial pose here: 
-  motion_controller_teleoperation.resetToReadyPose();
+  motion_controller_teleoperation.resetToLeftStagingPose();
   motion_controller_teleoperation.run();
   return 0;
 }
