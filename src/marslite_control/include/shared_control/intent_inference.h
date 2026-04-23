@@ -100,8 +100,27 @@ class IntentInference {
     is_positional_safety_button_pressed_ = is_pressed;
   }
 
-  inline void setReturnAssistEnabled(const bool& enabled) {
-    return_assist_enabled_ = enabled;
+  // inline void setReturnAssistEnabled(const bool& enabled) {
+  //   return_assist_enabled_ = enabled;
+  // }
+
+  inline void setExperimentID(const int& id) {
+    experiment_id_ = id;
+    switch (experiment_id_) {
+      case 1:
+        ROS_WARN_STREAM_ONCE("No staging pose specified for Experiment 1! "\
+            << "Return empty Pose() instead...");
+        staging_pose_ = geometry_msgs::Pose();
+      break;
+      case 2:
+        staging_pose_ = staging_pose_left_;
+      break;
+      case 3:
+        staging_pose_ = staging_pose_front_;
+      break;
+      default: break;
+    }
+    return_assist_enabled_ = (experiment_id_ != 1);
   }
 
   inline detection_msgs::DetectedObjectArray getObjectsWithBelief() const {
@@ -183,6 +202,15 @@ class IntentInference {
  private:
 
   void removeTargetFromRecordedObjects();
+
+  /**
+   * @brief Find and remove the recorded object nearest to the gripper.
+   *        Used when the gripper closes to handle cases where (a) camera
+   *        error shifts the target position, or (b) the operator grasps
+   *        a different object than the highest-belief target.
+   * @return true if an object was removed.
+   */
+  bool removeNearestGraspedObject();
   
   /**
    * @note `gripper_motion_state_` set to `PICK_READY` if true.
@@ -274,6 +302,7 @@ class IntentInference {
   double near_distance_threshold_;
   double position_tolerance_;
   double pick_area_distance_threshold_;
+  double grasp_removal_distance_threshold_;
   double user_command_speed_tolerance_;
   double toward_target_similarity_;
   double away_target_similarity_;
@@ -294,6 +323,7 @@ class IntentInference {
   bool is_reject_cooldown_timer_started_;
   bool is_reset_pose_signal_transferred_;
   bool is_reset_pose_completed_;
+  int experiment_id_;
 
   struct {
     ros::Time start_time;

@@ -78,9 +78,13 @@ void SharedControl::parseParameters() {
   pnh.param("use_sim", use_sim_, false);
   pnh.param("shared_control_enabled", shared_control_enabled_, true);
 
-  bool return_assist_enabled = true;
-  pnh.param("return_assist_enabled", return_assist_enabled, true);
-  intent_inference_.setReturnAssistEnabled(return_assist_enabled);
+  // bool return_assist_enabled = true;
+  // pnh.param("return_assist_enabled", return_assist_enabled, true);
+  // intent_inference_.setReturnAssistEnabled(return_assist_enabled);
+
+  int experiment_id = 1;
+  pnh.param("experiment_id", experiment_id, 1);
+  intent_inference_.setExperimentID(experiment_id);
 
   // Arbitration parameters (defaults match the old compile-time constants)
   nh_.param("arbitration/repulsive_force_weak_gain",        repulsive_force_weak_gain_,        0.8);
@@ -318,6 +322,8 @@ geometry_msgs::PoseStamped SharedControl::getReturnAssistPose() {
   //   3. Adjust height z toward staging height
   // Each component decays exponentially at its own rate.
   const geometry_msgs::Pose staging = intent_inference_.getStagingPose();
+  if (staging == geometry_msgs::Pose())
+    return current_gripper_pose_;
   const auto& cur = current_gripper_pose_.pose;
 
   // --- Current position in cylindrical coords (tm_base origin) ---

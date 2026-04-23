@@ -8,12 +8,14 @@
     <arg name="use_shared_controller" value="true"/>
   </include>
 
+  <arg name="experiment_id" default="1"/>
   <arg name="shared_control_enabled" default="true"/>
-  <arg name="return_assist_enabled" default="true"/>
+  <!-- <arg name="return_assist_enabled" default="true"/> -->
   <rosparam file="$(find marslite_control)/config/shared_control.yaml" command="load"/>
   <node name="shared_control_node" pkg="marslite_control" type="shared_control_node" output="screen">
+    <param name="experiment_id" value="$(arg experiment_id)"/>
     <param name="use_sim" value="$(arg use_sim)"/>
     <param name="shared_control_enabled" value="$(arg shared_control_enabled)"/>
-    <param name="return_assist_enabled" value="$(arg return_assist_enabled)"/>
+    <!-- <param name="return_assist_enabled" value="$(arg return_assist_enabled)"/> -->
   </node>
 </launch>

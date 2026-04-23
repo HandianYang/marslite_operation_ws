@@ -2,6 +2,7 @@
 #include <ros/time.h>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <geometry_msgs/PointStamped.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
@@ -19,6 +20,7 @@ IntentInference::IntentInference() :
     near_distance_threshold_(0.03),
     position_tolerance_(5e-3),
     pick_area_distance_threshold_(0.40),
+    grasp_removal_distance_threshold_(0.10),
     user_command_speed_tolerance_(0.15),
     toward_target_similarity_(0.5),
     away_target_similarity_(-0.707),
@@ -82,6 +84,7 @@ void IntentInference::parseParameters(const ros::NodeHandle& nh) {
   nh.getParam("intent_inference/near_distance_threshold",    near_distance_threshold_);
   nh.getParam("intent_inference/position_tolerance",         position_tolerance_);
   nh.getParam("intent_inference/pick_area_distance_threshold", pick_area_distance_threshold_);
+  nh.getParam("intent_inference/grasp_removal_distance_threshold", grasp_removal_distance_threshold_);
   nh.getParam("intent_inference/user_command_speed_tolerance", user_command_speed_tolerance_);
   nh.getParam("intent_inference/toward_target_similarity",   toward_target_similarity_);
   nh.getParam("intent_inference/away_target_similarity",     away_target_similarity_);
@@ -103,35 +106,19 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
   position_wrt_odom_ = {};
   position_wrt_tm_base_ = {};
 
-  //// TODO: Refactor
-  const size_t n = recorded_objects_.objects.size();
-  if (n == 0) return;
-
-  // First pass: transform and filter out objects beyond the TM5-700 reach.
-  // Unreachable items would otherwise dilute the belief mass of reachable ones.
-  for (const detection_msgs::DetectedObject& obj : recorded_objects.objects) {
-    geometry_msgs::PointStamped centroid;
-    centroid.header.frame_id = obj.frame;
-    centroid.point = obj.centroid;
-    // const geometry_msgs::PointStamped p_tm_base = tf2_listener_.transformData(centroid, "tm_base");
-    // const double planar_reach = std::hypot(p_tm_base.point.x, p_tm_base.point.y);
-    recorded_objects_.objects.push_back(obj);
-    position_wrt_odom_[obj] = tf2_listener_.transformData(centroid, "odom");
-    position_wrt_tm_base_[obj] = tf2_listener_.transformData(centroid, "tm_base");
-
-    belief_[obj] = 1.0 / static_cast<double>(n);
+  const size_t n = recorded_objects.objects.size();
+  if (n > 0) {
+    for (const detection_msgs::DetectedObject& obj : recorded_objects.objects) {
+      geometry_msgs::PointStamped centroid;
+      centroid.header.frame_id = obj.frame;
+      centroid.point = obj.centroid;
+      recorded_objects_.objects.push_back(obj);
+      position_wrt_odom_[obj] = tf2_listener_.transformData(centroid, "odom");
+      position_wrt_tm_base_[obj] = tf2_listener_.transformData(centroid, "tm_base");
+      belief_[obj] = 1.0 / static_cast<double>(n);
+    }
   }
-
-  // Second pass: initialize belief uniformly over the surviving objects.
-  // const size_t n = recorded_objects_.objects.size();
-  // if (n > 0) {
-  //   for (const detection_msgs::DetectedObject& obj : recorded_objects_.objects) {
-  //     belief_[obj] = 1.0 / static_cast<double>(n);
-  //   }
-  // }
-
-  // Determine the staging pose from the spatial layout of recorded objects.
-  this->computeStagingPose();
+  // this->computeStagingPose();
 }
 
  visualization_msgs::MarkerArray IntentInference::getBeliefVisualization()  {
@@ -266,8 +253,10 @@ void IntentInference::updateRobotState() {
     robot_state_ = RobotState::STANDBY;
   } else if (gripper_status_.data) {
     // ----- Priority 2: gripper is closed (PICK_GRASP) -----
-    if (this->isNearTarget())
-      this->removeTargetFromRecordedObjects();
+    if (robot_state_ != RobotState::PICK_GRASP) {
+      // Only remove on the transition into PICK_GRASP (first tick)
+      this->removeNearestGraspedObject();
+    }
     robot_state_ = RobotState::PICK_GRASP;
     grasp_completed_ = true;  // latch: an object has been grasped
   } else if (this->isNearTarget()) {
@@ -277,15 +266,6 @@ void IntentInference::updateRobotState() {
       robot_state_ = RobotState::PICK_ASSIST;
     } else {
       this->triggerResetPoseService();
-      // if (is_reset_pose_signal_transferred_ == false) {
-      //   if (reset_pose_handler_) {
-      //     is_reset_pose_completed_ = reset_pose_handler_();
-      //     is_reset_pose_signal_transferred_ = true;
-      //   } else {
-      //     ROS_WARN("reset_pose_handler_");
-      //   }
-      // }
-
       if (is_reset_pose_completed_) {
         robot_state_ = RobotState::PICK_READY;
       }
@@ -361,14 +341,6 @@ void IntentInference::updateRobotState() {
         } else if (this->isNearStagingPose() || this->isAwayFromStagingPose()) {
           // Tick N: Trigger reset pose service
           this->triggerResetPoseService();
-          // if (!is_reset_pose_signal_transferred_) {
-          //   if (reset_pose_handler_) {
-          //     is_reset_pose_completed_ = reset_pose_handler_();
-          //     is_reset_pose_signal_transferred_ = true;
-          //   } else {
-          //     ROS_WARN("reset_pose_handler_");
-          //   }
-          // }
         }
         // else: remain RETURN_ASSIST
       break;
@@ -467,17 +439,63 @@ void IntentInference::removeTargetFromRecordedObjects() {
   }
 }
 
+bool IntentInference::removeNearestGraspedObject() {
+  if (recorded_objects_.objects.empty()) return false;
+
+  // Find the recorded object closest to the gripper
+  double min_dist = std::numeric_limits<double>::max();
+  const detection_msgs::DetectedObject* nearest = nullptr;
+  for (const auto& obj : recorded_objects_.objects) {
+    const auto it = position_wrt_tm_base_.find(obj);
+    if (it == position_wrt_tm_base_.end()) continue;
+    const double dx = it->second.point.x - gripper_position_.x;
+    const double dy = it->second.point.y - gripper_position_.y;
+    const double dz = it->second.point.z - gripper_position_.z;
+    const double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (dist < min_dist) {
+      min_dist = dist;
+      nearest = &obj;
+    }
+  }
+
+  if (!nearest || min_dist > grasp_removal_distance_threshold_) return false;
+
+  // Remove the nearest object
+  const detection_msgs::DetectedObject to_remove = *nearest;
+  recorded_objects_.objects.erase(
+      std::remove_if(
+          recorded_objects_.objects.begin(),
+          recorded_objects_.objects.end(),
+          [&to_remove](const detection_msgs::DetectedObject& obj) {
+              return obj.label == to_remove.label && obj.frame == to_remove.frame
+                  && obj.centroid == to_remove.centroid;
+          }
+      ),
+      recorded_objects_.objects.end()
+  );
+  belief_.erase(to_remove);
+  position_wrt_odom_.erase(to_remove);
+  position_wrt_tm_base_.erase(to_remove);
+
+  if (!recorded_objects_.objects.empty()) {
+    for (const detection_msgs::DetectedObject& obj : recorded_objects_.objects) {
+      belief_[obj] = 1.0 / recorded_objects_.objects.size();
+    }
+  }
+  return true;
+}
+
 const bool IntentInference::isNearTarget() const {
+  if (belief_.empty())  return false;
   const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
-  if (target_direction == geometry_msgs::Vector3())  return false;
   const double target_distance_xy = std::hypot(target_direction.x, target_direction.y);
   return target_distance_xy < near_distance_threshold_
       && std::abs(target_direction.z) < z_distance_threshold_;
 }
 
 const bool IntentInference::isTargetReached() const {
+  if (belief_.empty())  return false;
   const geometry_msgs::Vector3 target_direction = this->getTargetDirection();
-  if (target_direction == geometry_msgs::Vector3())  return false;
   const double target_distance_xy = std::hypot(target_direction.x, target_direction.y);
   return target_distance_xy < position_tolerance_
       && std::abs(target_direction.z) < z_distance_threshold_;
@@ -545,29 +563,34 @@ void IntentInference::computeStagingPose() {
   /// NOTE: This method works only if there are exactly two staging poses.
   ///  Developer should rewrite this function if new staging poses will be
   ///  appended.
-  if (recorded_objects_.objects.empty()) {
-    staging_pose_ = staging_pose_front_;
-    return;
-  }
-  // Compute mean y of all recorded objects in tm_base to determine layout.
-  double mean_y = 0.0;
-  for (const auto& obj : recorded_objects_.objects) {
-    mean_y += position_wrt_tm_base_[obj].point.y;
-  }
-  mean_y /= static_cast<double>(recorded_objects_.objects.size());
 
-  if (mean_y >= layout_threshold_) {
-    staging_pose_ = staging_pose_left_;
-    ROS_INFO_STREAM("IntentInference: left layout detected (mean_y=" << mean_y
-        << "), staging pose left selected");
-  } else {
-    staging_pose_ = staging_pose_front_;
-    ROS_INFO_STREAM("IntentInference: front layout detected (mean_y=" << mean_y
-        << "), staging pose front selected");
-  }
+  // if (recorded_objects_.objects.empty()) {
+  //   staging_pose_ = staging_pose_front_;
+  //   return;
+  // }
+  // // Compute mean y of all recorded objects in tm_base to determine layout.
+  // double mean_y = 0.0;
+  // for (const auto& obj : recorded_objects_.objects) {
+  //   mean_y += position_wrt_tm_base_[obj].point.y;
+  // }
+  // mean_y /= static_cast<double>(recorded_objects_.objects.size());
+
+  // if (mean_y >= layout_threshold_) {
+  //   staging_pose_ = staging_pose_left_;
+  //   ROS_INFO_STREAM("IntentInference: left layout detected (mean_y=" << mean_y
+  //       << "), staging pose left selected");
+  // } else {
+  //   staging_pose_ = staging_pose_front_;
+  //   ROS_INFO_STREAM("IntentInference: front layout detected (mean_y=" << mean_y
+  //       << "), staging pose front selected");
+  // }
+
+
 }
 
 const bool IntentInference::isTowardStagingPose() const {
+  if (experiment_id_ == 1)  return false;
+
   geometry_msgs::Vector3 staging_direction;
   staging_direction.x = staging_pose_.position.x - gripper_position_.x;
   staging_direction.y = staging_pose_.position.y - gripper_position_.y;
@@ -583,6 +606,8 @@ const bool IntentInference::isTowardStagingPose() const {
 }
 
 const bool IntentInference::isNearStagingPose() const {
+  if (experiment_id_ == 1)  return false;
+
   const double theta_cur = std::atan2(gripper_position_.y, gripper_position_.x);
   const double theta_stg = std::atan2(staging_pose_.position.y,
                                       staging_pose_.position.x);
@@ -593,6 +618,8 @@ const bool IntentInference::isNearStagingPose() const {
 }
 
 const bool IntentInference::isAwayFromStagingPose() const {
+  if (experiment_id_ == 1)  return false;
+
   geometry_msgs::Vector3 staging_direction;
   staging_direction.x = staging_pose_.position.x - gripper_position_.x;
   staging_direction.y = staging_pose_.position.y - gripper_position_.y;

@@ -19,13 +19,14 @@ intent_inference:
   near_distance_threshold: 0.03       # [m] XY distance for "near target" (ready zone)
   position_tolerance: 0.005           # [m] XY distance for "target reached"
   pick_area_distance_threshold: 0.40  # [m] max 3D distance for isInPickArea
+  grasp_removal_distance_threshold: 0.10  # [m] max 3D distance to remove nearest object on grasp
 
   # --- User command ---
   user_command_speed_tolerance: 0.15  # [m/s] ignore commands below this speed
 
   # --- Direction similarity ---
-  toward_target_similarity: 0.5      # cos(60°) ≈ 0.5
-  away_target_similarity: -0.707     # cos(135°) ≈ -0.707
+  toward_target_similarity: 0.5  # cos(60°) ≈ 0.5
+  away_target_similarity: -0.707  # cos(135°) ≈ -0.707
 
   # --- Timers ---
   assist_dwell_time: 0.3             # [s] hold before PICK_MANUAL → PICK_ASSIST
