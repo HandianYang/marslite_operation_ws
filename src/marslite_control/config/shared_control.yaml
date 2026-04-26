@@ -3,59 +3,30 @@
 # ============================================================
 
 intent_inference:
-  # Markov transition probability between objects per update step
-  transition_probability: 0.1
-
   # --- Bayesian belief update ---
+  transition_probability: 0.1
   direction_likelihood_parameter: 4.0
   proximity_likelihood_parameter: 3.0
 
-  # --- Confidence threshold (normalized-entropy) ---
-  # confidence = 1 - H/log(N); range [0,1]; 0 = uniform, 1 = certain
-  confidence_threshold: 0.45
+  # --- thresholds ---
+  confidence_threshold: 0.45  # confidence = (p_max - 1/N) / (1 - 1/N).
 
-  # --- Distance thresholds ---
-  z_distance_threshold: 0.15          # [m] max |dz| for isNearTarget / isTargetReached
-  near_distance_threshold: 0.03       # [m] XY distance for "near target" (ready zone)
-  position_tolerance: 0.005           # [m] XY distance for "target reached"
-  pick_area_distance_threshold: 0.40  # [m] max 3D distance for isInPickArea
-  grasp_removal_distance_threshold: 0.10  # [m] max 3D distance to remove nearest object on grasp
-
-  # --- User command ---
+  z_distance_threshold: 0.15  # [m] max |dz| for `isNearTarget`/`isTargetReached`
+  near_distance_threshold: 0.03  # [m] XY distance for `isNearTarget`
+  position_tolerance: 0.005  # [m] XY distance for `isTargetReached`
+  pick_area_distance_threshold: 0.40  # [m] 3D distance for `isInPickArea`
+  grasp_removal_distance_threshold: 0.10  # [m] 3D distance to remove nearest object on grasp
+  staging_pose_reached_angle: 0.05  # [rad] ~3° azimuth convergence to end return-assist
+  
   user_command_speed_tolerance: 0.15  # [m/s] ignore commands below this speed
-
-  # --- Direction similarity ---
+  
   toward_target_similarity: 0.5  # cos(60°) ≈ 0.5
   away_target_similarity: -0.707  # cos(135°) ≈ -0.707
 
   # --- Timers ---
-  assist_dwell_time: 0.3             # [s] hold before PICK_MANUAL → PICK_ASSIST
-  reject_cooldown_time: 1.0          # [s] cooldown after PICK_REJECT
-
-  # --- Return-assist staging poses (tm_base frame) ---
-  staging_pose_front:  # front layout (mean_y < layout_threshold)
-    position:
-      x: 0.5
-      y: -0.122
-      z: 0.60
-    orientation:  # quaternion (roll=pi/2, pitch=0, yaw=pi/2)
-      x: 0.5
-      y: 0.5
-      z: 0.5
-      w: 0.5
-  staging_pose_left:  # left layout (mean_y >= layout_threshold)
-    position:
-      x: 0.122
-      y: 0.35
-      z: 0.60
-    orientation:  # quaternion (roll=pi/2, pitch=0, yaw=pi)
-      x: 0.0
-      y: 0.707
-      z: 0.707
-      w: 0.0
-  layout_threshold: 0.3  # [m] mean_y threshold for staging poses
-  staging_pose_reached_angle: 0.05 # [rad] ~3° azimuth convergence to end return-assist
-
+  assist_dwell_time: 0.3  # [s] hold before PICK_MANUAL → PICK_ASSIST
+  reject_cooldown_time: 1.0  # [s] cooldown after PICK_REJECT
+  
 arbitration:
   # --- Lateral suppression ---
   repulsive_force_weak_gain: 0.8      # gain at distance >= junction

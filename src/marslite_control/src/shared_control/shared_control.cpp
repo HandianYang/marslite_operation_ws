@@ -78,10 +78,6 @@ void SharedControl::parseParameters() {
   pnh.param("use_sim", use_sim_, false);
   pnh.param("shared_control_enabled", shared_control_enabled_, true);
 
-  // bool return_assist_enabled = true;
-  // pnh.param("return_assist_enabled", return_assist_enabled, true);
-  // intent_inference_.setReturnAssistEnabled(return_assist_enabled);
-
   int experiment_id = 1;
   pnh.param("experiment_id", experiment_id, 1);
   intent_inference_.setExperimentID(experiment_id);

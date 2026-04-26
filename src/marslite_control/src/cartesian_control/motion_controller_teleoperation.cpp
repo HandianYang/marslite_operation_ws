@@ -70,36 +70,44 @@ geometry_msgs::PoseStamped MotionControllerTeleoperation::generateInitialGripper
   return initial_pose;
 }
 
+void MotionControllerTeleoperation::resetToLeftStagingPose() {
+  geometry_msgs::PoseStamped pose;
+  pose.header.frame_id = "tm_base";
+  pose.pose = staging_pose_left_;
+  this->teleoperateToPose(pose);
+
+  // NOTE: This must be set after teleoperateToPose()
+  control_view_angle_ = M_PI / 2;
+}
+
 void MotionControllerTeleoperation::resetToFrontStagingPose() {
   geometry_msgs::PoseStamped pose;
   pose.header.frame_id = "tm_base";
-  pose.pose.position.x = 0.5;
-  pose.pose.position.y = -0.122;
-  pose.pose.position.z = 0.6;
-  pose.pose.orientation.x = 0.5;
-  pose.pose.orientation.y = 0.5;
-  pose.pose.orientation.z = 0.5;
-  pose.pose.orientation.w = 0.5;
+  pose.pose = staging_pose_front_;
   this->teleoperateToPose(pose);
 
   // NOTE: This must be set after teleoperateToPose()
   control_view_angle_ = 0.0;
 }
 
-void MotionControllerTeleoperation::resetToLeftStagingPose() {
+void MotionControllerTeleoperation::resetToRightStagingPose() {
   geometry_msgs::PoseStamped pose;
   pose.header.frame_id = "tm_base";
-  pose.pose.position.x = 0.122;
-  pose.pose.position.y = 0.35;
-  pose.pose.position.z = 0.6;
-  pose.pose.orientation.x = 0.0;
-  pose.pose.orientation.y = 0.707;
-  pose.pose.orientation.z = 0.707;
-  pose.pose.orientation.w = 0.0;
+  pose.pose = staging_pose_right_;
   this->teleoperateToPose(pose);
 
   // NOTE: This must be set after teleoperateToPose()
-  control_view_angle_ = M_PI / 2;
+  control_view_angle_ = - M_PI / 2;
+}
+
+void MotionControllerTeleoperation::resetToExp3StagingPose() {
+  geometry_msgs::PoseStamped pose;
+  pose.header.frame_id = "tm_base";
+  pose.pose = staging_pose_exp3_;
+  this->teleoperateToPose(pose);
+
+  // NOTE: This must be set after teleoperateToPose()
+  control_view_angle_ = M_PI / 9;
 }
 
 void MotionControllerTeleoperation::resetToFrontPose() {
@@ -248,6 +256,10 @@ void MotionControllerTeleoperation::parseParameters() {
   nh_.getParam("robotic_arm/orientation/roll_scale", gripper_orientation_roll_scale_);
   nh_.getParam("robotic_arm/orientation/pitch_scale", gripper_orientation_pitch_scale_);
   nh_.getParam("robotic_arm/orientation/yaw_scale", gripper_orientation_yaw_scale_);
+  this->loadPoseParam("staging_pose_left",  staging_pose_left_);
+  this->loadPoseParam("staging_pose_front", staging_pose_front_);
+  this->loadPoseParam("staging_pose_right", staging_pose_right_);
+  this->loadPoseParam("staging_pose_exp3", staging_pose_exp3_);
 
   // Orientation limits are specified in degrees in YAML for readability
   double roll_limit_deg = gripper_orientation_roll_limit_ * 180.0 / M_PI;
@@ -279,6 +291,17 @@ void MotionControllerTeleoperation::parseParameters() {
       << "\n * gripper_orientation_pitch_limit: " << pitch_limit_deg << " deg"
       << "\n * gripper_orientation_yaw_limit: " << yaw_limit_deg << " deg"
   );
+}
+
+void MotionControllerTeleoperation::loadPoseParam(const std::string& prefix,
+                                                  geometry_msgs::Pose& pose) {
+  nh_.getParam(prefix + "/position/x",    pose.position.x);
+  nh_.getParam(prefix + "/position/y",    pose.position.y);
+  nh_.getParam(prefix + "/position/z",    pose.position.z);
+  nh_.getParam(prefix + "/orientation/x", pose.orientation.x);
+  nh_.getParam(prefix + "/orientation/y", pose.orientation.y);
+  nh_.getParam(prefix + "/orientation/z", pose.orientation.z);
+  nh_.getParam(prefix + "/orientation/w", pose.orientation.w);
 }
 
 void MotionControllerTeleoperation::initializePublishers() {

@@ -20,3 +20,47 @@ robotic_arm:
     roll_limit_deg: 30.0  # [deg]
     pitch_limit_deg: 30.0  # [deg]
     yaw_limit_deg: 30.0  # [deg]
+
+staging_pose_left:
+  position:
+    x: 0.122
+    y: 0.35
+    z: 0.60
+  orientation:  # roll=pi/2, pitch=0, yaw=pi
+    x: 0.0
+    y: 0.707
+    z: 0.707
+    w: 0.0
+staging_pose_front:
+  position:
+    x: 0.5
+    y: -0.122
+    z: 0.60
+  orientation:  # roll=pi/2, pitch=0, yaw=pi/2
+    x: 0.5
+    y: 0.5
+    z: 0.5
+    w: 0.5
+staging_pose_right:
+  position:
+    x: -0.022
+    y: -0.5
+    z: 0.60
+  orientation:  # roll=pi/2, pitch=0, yaw=0
+    x: 0.707
+    y: 0.0
+    z: 0.0
+    w: 0.707
+
+# temporary staging pose for experiment #3
+# TODO: Modify the appropriate value of this pose
+staging_pose_exp3:
+  position:
+    x: 0.5
+    y: -0.122
+    z: 0.60
+  orientation:
+    x: 0.5
+    y: 0.5
+    z: 0.5
+    w: 0.5

@@ -31,18 +31,12 @@ using ObjectPositionMap = std::map<detection_msgs::DetectedObject, geometry_msgs
 
 enum class RobotState : uint8_t {
   STANDBY = 0,
-  // PICK PHASE (Gripper OPEN) 
   PICK_MANUAL = 1,
   PICK_ASSIST = 2,
   PICK_REJECT = 3,
   PICK_READY = 4,
   PICK_GRASP = 5,
   RETURN_ASSIST = 6
-  /// TODO: Add PLACE phase states
-  // PLACE_MANUAL,
-  // PLACE_ASSIST,
-  // PLACE_READY,
-  // PLACE_COMPLETE,
 };
 
 static std::string toString(RobotState s) {
@@ -54,10 +48,6 @@ static std::string toString(RobotState s) {
     case RobotState::PICK_READY:   return "PICK_READY";
     case RobotState::PICK_GRASP:    return "PICK_GRASP";
     case RobotState::RETURN_ASSIST: return "RETURN_ASSIST";
-    // case RobotState::PLACE_MANUAL:  return "PLACE_MANUAL";
-    // case RobotState::PLACE_ASSIST:  return "PLACE_ASSIST";
-    // case RobotState::PLACE_READY:   return "PLACE_READY";
-    // case RobotState::PLACE_COMPLETE: return "PLACE_COMPLETE";
   }
   return "UNKNOWN"; // fallback
 }
@@ -100,39 +90,9 @@ class IntentInference {
     is_positional_safety_button_pressed_ = is_pressed;
   }
 
-  // inline void setReturnAssistEnabled(const bool& enabled) {
-  //   return_assist_enabled_ = enabled;
-  // }
+  void setExperimentID(const int& id);
 
-  inline void setExperimentID(const int& id) {
-    experiment_id_ = id;
-    switch (experiment_id_) {
-      case 1:
-        ROS_WARN_STREAM_ONCE("No staging pose specified for Experiment 1! "\
-            << "Return empty Pose() instead...");
-        staging_pose_ = geometry_msgs::Pose();
-      break;
-      case 2:
-        staging_pose_ = staging_pose_left_;
-      break;
-      case 3:
-        staging_pose_ = staging_pose_front_;
-      break;
-      default: break;
-    }
-    return_assist_enabled_ = (experiment_id_ != 1);
-  }
-
-  inline detection_msgs::DetectedObjectArray getObjectsWithBelief() const {
-    detection_msgs::DetectedObjectArray objects_with_belief;
-    for (const auto& [object, prob] : belief_) {
-      objects_with_belief.objects.push_back(object);
-      objects_with_belief.objects.back().frame = "tm_base";
-      objects_with_belief.objects.back().centroid = position_wrt_tm_base_.at(object).point;
-      objects_with_belief.objects.back().confidence = prob;
-    }
-    return objects_with_belief;
-  }
+  detection_msgs::DetectedObjectArray getObjectsWithBelief() const;
 
   inline RobotState getRobotState() const {
     return robot_state_;
@@ -278,8 +238,6 @@ class IntentInference {
 
   const bool isAwayFromStagingPose() const;
 
-  void computeStagingPose();
-
   geometry_msgs::Vector3 getGoalDirection(const detection_msgs::DetectedObject& goal) const;
   
   double getCosineSimilarity(const geometry_msgs::Vector3& user_direction,
@@ -308,11 +266,10 @@ class IntentInference {
   double away_target_similarity_;
   double assist_dwell_time_;
   double reject_cooldown_time_;
-  geometry_msgs::Pose staging_pose_front_;
   geometry_msgs::Pose staging_pose_left_;
-  double layout_threshold_;
+  geometry_msgs::Pose staging_pose_front_;
+  geometry_msgs::Pose staging_pose_exp3_;
   double staging_pose_reached_angle_;   // [rad] azimuth convergence threshold
-
   double confidence_; // [0,1], computed at runtime
 
   bool use_sim_;

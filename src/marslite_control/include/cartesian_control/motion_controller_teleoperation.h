@@ -65,8 +65,10 @@ class MotionControllerTeleoperation {
       const bool& use_sim = false
   );
 
-  void resetToFrontStagingPose();
   void resetToLeftStagingPose();
+  void resetToFrontStagingPose();
+  void resetToRightStagingPose();
+  void resetToExp3StagingPose();
   void resetToFrontPose();
   void resetToLeftPose();
   void resetToRightPose();
@@ -91,6 +93,7 @@ class MotionControllerTeleoperation {
   };
 
   void parseParameters();
+  void loadPoseParam(const std::string& prefix, geometry_msgs::Pose& pose);
   void initializePublishers();
   void initializeSubscribers();
   void initializeHeadersForMessages();
@@ -218,6 +221,10 @@ class MotionControllerTeleoperation {
   double gripper_orientation_roll_limit_;
   double gripper_orientation_pitch_limit_;
   double gripper_orientation_yaw_limit_;
+  geometry_msgs::Pose staging_pose_left_;
+  geometry_msgs::Pose staging_pose_front_;
+  geometry_msgs::Pose staging_pose_right_;
+  geometry_msgs::Pose staging_pose_exp3_;
 
   // [radian] angle difference between first joint yaw angle and control view direction
   double control_view_offset_;

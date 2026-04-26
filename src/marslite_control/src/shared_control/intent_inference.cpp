@@ -26,7 +26,6 @@ IntentInference::IntentInference() :
     away_target_similarity_(-0.707),
     assist_dwell_time_(0.3),
     reject_cooldown_time_(1.0),
-    layout_threshold_(0.15),
     staging_pose_reached_angle_(0.05),  // ~3°
     confidence_(0.0),
     use_sim_(false),
@@ -43,24 +42,6 @@ IntentInference::IntentInference() :
   belief_ = {};
   position_wrt_odom_ = {};
   position_wrt_tm_base_ = {};
-
-  // Default front staging pose (staging_pose_front)
-  staging_pose_front_.position.x = 0.5;
-  staging_pose_front_.position.y = -0.122;
-  staging_pose_front_.position.z = 0.60;
-  staging_pose_front_.orientation.x = 0.5;
-  staging_pose_front_.orientation.y = 0.5;
-  staging_pose_front_.orientation.z = 0.5;
-  staging_pose_front_.orientation.w = 0.5;
-
-  // Default left staging pose (staging_pose_left)
-  staging_pose_left_.position.x = 0.122;
-  staging_pose_left_.position.y = 0.35;
-  staging_pose_left_.position.z = 0.60;
-  staging_pose_left_.orientation.x = 0.0;
-  staging_pose_left_.orientation.y = 0.707;
-  staging_pose_left_.orientation.z = 0.707;
-  staging_pose_left_.orientation.w = 0.0;
 }
 
 void IntentInference::loadPoseParam(const ros::NodeHandle& nh,
@@ -76,23 +57,24 @@ void IntentInference::loadPoseParam(const ros::NodeHandle& nh,
 }
 
 void IntentInference::parseParameters(const ros::NodeHandle& nh) {
-  nh.getParam("intent_inference/transition_probability",     transition_probability_);
+  loadPoseParam(nh, "motion_controller_teleoperation/staging_pose_left", staging_pose_left_);
+  loadPoseParam(nh, "motion_controller_teleoperation/staging_pose_front", staging_pose_front_);
+  loadPoseParam(nh, "motion_controller_teleoperation/staging_pose_exp3", staging_pose_exp3_);
+
+  nh.getParam("intent_inference/transition_probability", transition_probability_);
   nh.getParam("intent_inference/direction_likelihood_parameter", direction_likelihood_parameter_);
   nh.getParam("intent_inference/proximity_likelihood_parameter", proximity_likelihood_parameter_);
-  nh.getParam("intent_inference/confidence_threshold",       confidence_threshold_);
-  nh.getParam("intent_inference/z_distance_threshold",       z_distance_threshold_);
-  nh.getParam("intent_inference/near_distance_threshold",    near_distance_threshold_);
-  nh.getParam("intent_inference/position_tolerance",         position_tolerance_);
+  nh.getParam("intent_inference/confidence_threshold", confidence_threshold_);
+  nh.getParam("intent_inference/z_distance_threshold", z_distance_threshold_);
+  nh.getParam("intent_inference/near_distance_threshold", near_distance_threshold_);
+  nh.getParam("intent_inference/position_tolerance", position_tolerance_);
   nh.getParam("intent_inference/pick_area_distance_threshold", pick_area_distance_threshold_);
   nh.getParam("intent_inference/grasp_removal_distance_threshold", grasp_removal_distance_threshold_);
   nh.getParam("intent_inference/user_command_speed_tolerance", user_command_speed_tolerance_);
-  nh.getParam("intent_inference/toward_target_similarity",   toward_target_similarity_);
-  nh.getParam("intent_inference/away_target_similarity",     away_target_similarity_);
-  nh.getParam("intent_inference/assist_dwell_time",          assist_dwell_time_);
-  nh.getParam("intent_inference/reject_cooldown_time",       reject_cooldown_time_);
-  loadPoseParam(nh, "intent_inference/staging_pose_front", staging_pose_front_);
-  loadPoseParam(nh, "intent_inference/staging_pose_left",  staging_pose_left_);
-  nh.getParam("intent_inference/layout_threshold",           layout_threshold_);
+  nh.getParam("intent_inference/toward_target_similarity", toward_target_similarity_);
+  nh.getParam("intent_inference/away_target_similarity", away_target_similarity_);
+  nh.getParam("intent_inference/assist_dwell_time", assist_dwell_time_);
+  nh.getParam("intent_inference/reject_cooldown_time", reject_cooldown_time_);
   nh.getParam("intent_inference/staging_pose_reached_angle", staging_pose_reached_angle_);
 }
 
@@ -118,10 +100,39 @@ void IntentInference::setRecordedObjects(const detection_msgs::DetectedObjectArr
       belief_[obj] = 1.0 / static_cast<double>(n);
     }
   }
-  // this->computeStagingPose();
 }
 
- visualization_msgs::MarkerArray IntentInference::getBeliefVisualization()  {
+void IntentInference::setExperimentID(const int& id) {
+  experiment_id_ = id;
+  switch (experiment_id_) {
+    case 1:
+      ROS_WARN_STREAM_ONCE("No staging pose specified for Experiment 1! "\
+          << "Return empty Pose() instead...");
+      staging_pose_ = geometry_msgs::Pose();
+    break;
+    case 2:
+      staging_pose_ = staging_pose_left_;
+    break;
+    case 3:
+      staging_pose_ = staging_pose_exp3_;
+    break;
+    default: break;
+  }
+  return_assist_enabled_ = (experiment_id_ != 1);
+}
+
+detection_msgs::DetectedObjectArray IntentInference::getObjectsWithBelief() const {
+  detection_msgs::DetectedObjectArray objects_with_belief;
+  for (const auto& [object, prob] : belief_) {
+    objects_with_belief.objects.push_back(object);
+    objects_with_belief.objects.back().frame = "tm_base";
+    objects_with_belief.objects.back().centroid = position_wrt_tm_base_.at(object).point;
+    objects_with_belief.objects.back().confidence = prob;
+  }
+  return objects_with_belief;
+}
+
+visualization_msgs::MarkerArray IntentInference::getBeliefVisualization() {
   visualization_msgs::MarkerArray marker_array;
   int id = 0;
   for (const auto& [object, belief_value] : belief_) {
@@ -557,35 +568,6 @@ void IntentInference::triggerRejectCooldownTimer() {
 const bool IntentInference::isRejectCooldownTimePassed() {
   cooldown_timer_.current_time = ros::Time::now();
   return cooldown_timer_.getTimeDifference() >= reject_cooldown_time_;
-}
-
-void IntentInference::computeStagingPose() {
-  /// NOTE: This method works only if there are exactly two staging poses.
-  ///  Developer should rewrite this function if new staging poses will be
-  ///  appended.
-
-  // if (recorded_objects_.objects.empty()) {
-  //   staging_pose_ = staging_pose_front_;
-  //   return;
-  // }
-  // // Compute mean y of all recorded objects in tm_base to determine layout.
-  // double mean_y = 0.0;
-  // for (const auto& obj : recorded_objects_.objects) {
-  //   mean_y += position_wrt_tm_base_[obj].point.y;
-  // }
-  // mean_y /= static_cast<double>(recorded_objects_.objects.size());
-
-  // if (mean_y >= layout_threshold_) {
-  //   staging_pose_ = staging_pose_left_;
-  //   ROS_INFO_STREAM("IntentInference: left layout detected (mean_y=" << mean_y
-  //       << "), staging pose left selected");
-  // } else {
-  //   staging_pose_ = staging_pose_front_;
-  //   ROS_INFO_STREAM("IntentInference: front layout detected (mean_y=" << mean_y
-  //       << "), staging pose front selected");
-  // }
-
-
 }
 
 const bool IntentInference::isTowardStagingPose() const {
