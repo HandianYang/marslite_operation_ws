@@ -15,8 +15,8 @@
 
 SharedControl::SharedControl(const ros::NodeHandle& nh)
     : nh_(nh), loop_rate_(ros::Rate(50)), begin_recording_(false) {
-  this->parseParameters();
   intent_inference_.parseParameters(nh_);
+  this->parseParameters();
   this->initializePublishers();
   this->initializeSubscribers();
   reset_client_ = nh_.serviceClient<std_srvs::Trigger>("reset_teleop_origin");

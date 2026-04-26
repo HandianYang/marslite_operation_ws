@@ -57,9 +57,9 @@ void IntentInference::loadPoseParam(const ros::NodeHandle& nh,
 }
 
 void IntentInference::parseParameters(const ros::NodeHandle& nh) {
-  loadPoseParam(nh, "motion_controller_teleoperation/staging_pose_left", staging_pose_left_);
-  loadPoseParam(nh, "motion_controller_teleoperation/staging_pose_front", staging_pose_front_);
-  loadPoseParam(nh, "motion_controller_teleoperation/staging_pose_exp3", staging_pose_exp3_);
+  loadPoseParam(nh, "staging_pose_left", staging_pose_left_);
+  loadPoseParam(nh, "staging_pose_front", staging_pose_front_);
+  loadPoseParam(nh, "staging_pose_exp3", staging_pose_exp3_);
 
   nh.getParam("intent_inference/transition_probability", transition_probability_);
   nh.getParam("intent_inference/direction_likelihood_parameter", direction_likelihood_parameter_);
